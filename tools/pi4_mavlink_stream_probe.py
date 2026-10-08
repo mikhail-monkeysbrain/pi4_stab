@@ -19,6 +19,8 @@ def main():
     ap.add_argument("--port",default="/dev/serial0")
     ap.add_argument("--baud",type=int,default=460800)
     ap.add_argument("--seconds",type=float,default=20)
+    ap.add_argument("--target-system",type=int,default=1)
+    ap.add_argument("--target-component",type=int,default=1)
     ap.add_argument("--request",action="store_true",
                     help="request ATTITUDE RAW_IMU SCALED_IMU HIGHRES_IMU at 20Hz")
     args=ap.parse_args()
@@ -41,7 +43,9 @@ def main():
             src[(m.get_srcSystem(),m.get_srcComponent())]+=1
             if kind=="COMMAND_ACK":
                 ack[(getattr(m,"command",None),getattr(m,"result",None))]+=1
-            if kind=="HEARTBEAT" and target is None and m.get_srcSystem()!=0:
+            if (kind=="HEARTBEAT" and target is None and
+                m.get_srcSystem()==args.target_system and
+                m.get_srcComponent()==args.target_component):
                 target=(m.get_srcSystem(),m.get_srcComponent())
             if args.request and target and not requested:
                 requested=True
@@ -61,7 +65,7 @@ def main():
             print(f"ACK command={cmd} result={result} count={n}")
     finally:
         conn.close()
-    return 0 if counts.get("HEARTBEAT",0) else 1
+    return 0 if (not args.request or requested) and counts.get("HEARTBEAT",0) else 1
 
 if __name__=="__main__":
     raise SystemExit(main())
