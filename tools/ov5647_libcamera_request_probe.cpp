@@ -131,7 +131,7 @@ int main(int argc, char **argv) {
             }
             auto it=r->buffers().find(stream);
             if (it == r->buffers().end()) throw std::runtime_error("request missing buffer");
-            const auto *buffer=it->second;
+            auto *buffer=it->second;
             const auto &mapping=*mappings.at(buffer);
             const size_t required=static_cast<size_t>(cfg.stride)*cfg.size.height;
             if (required > mapping.size)
