@@ -49,6 +49,9 @@ def main():
                     continue
                 recv_ns = time.monotonic_ns()
                 row = {k: getattr(msg, k, "") for k in FIELDS}
+                # Preserve native MAVLink clock fields under stable CSV names.
+                row["fc_time_boot_ms"] = getattr(msg, "time_boot_ms", "")
+                row["fc_time_usec"] = getattr(msg, "time_usec", "")
                 row["recv_mono_ns"] = recv_ns
                 row["msg_type"] = kind
                 row["src_system"] = msg.get_srcSystem()
