@@ -39,8 +39,8 @@ int main(int argc,char **argv) {
         uint64_t captured=0, dropped=0;
         // Optional third argument: diagnostic per-step CSV, no FC publishing.
         std::ofstream steps_csv;
-        if (argc > 3) {
-            steps_csv.open(argv[3]);
+        if (argc > 2) {
+            steps_csv.open(argv[2]);
             if (!steps_csv) throw std::runtime_error("cannot open WORKED5 steps CSV");
             steps_csv << "sensor_ts_ns,dt_s,points,du_norm,dv_norm,scale_per_s,yaw_per_s,synthetic_dx_m,synthetic_dy_m,metric_valid\n";
         }
