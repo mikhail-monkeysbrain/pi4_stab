@@ -35,7 +35,8 @@ def main():
     baro_cmd = [args.python, str(root / "tools/pi4_baro_interval_probe.py"),
                 "--port", args.port, "--baud", str(args.baud),
                 "--seconds", str(args.seconds + 2)]
-    cam_cmd = [str(binary), str(args.seconds), str(out / "camera_timestamps.csv")]
+    cam_cmd = [str(binary), str(args.seconds), str(out / "camera_timestamps.csv"),
+               str(out / "worked5_steps.csv")]
     with (out / "baro.log").open("w") as baro_log, (out / "camera.log").open("w") as cam_log:
         baro = subprocess.Popen(baro_cmd, cwd=root, stdout=baro_log,
                                 stderr=subprocess.STDOUT)
@@ -62,6 +63,7 @@ def main():
             if line.startswith(prefixes):
                 print(line)
     print("CAMERA_CSV", out / "camera_timestamps.csv")
+    print("WORKED5_STEPS_CSV", out / "worked5_steps.csv")
     print("CAMERA_LOG", out / "camera.log")
     print("BARO_LOG", out / "baro.log")
     return 0 if cam_rc == 0 and baro_rc == 0 else 1
