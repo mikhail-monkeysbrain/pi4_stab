@@ -103,7 +103,9 @@ int main(int argc, char **argv) {
                 throw std::runtime_error("request creation/addBuffer failed");
             requests.push_back(std::move(request));
         }
-        if (camera->start()) throw std::runtime_error("camera start failed");
+        ControlList start_controls(camera->controls());
+        start_controls.set(controls::FrameDurationLimits, {16666, 16666});
+        if (camera->start(&start_controls)) throw std::runtime_error("camera start failed");
         for (auto &r : requests)
             if (camera->queueRequest(r.get())) throw std::runtime_error("queueRequest failed");
 
@@ -157,7 +159,8 @@ int main(int argc, char **argv) {
                  <<" no_fc_tx=1 no_worked5_change=1\n";
         camera->requestCompleted.disconnect(&completed, &Completed::done);
         camera->release();
-        manager.stop();
+        // CameraManager destructor runs after camera, requests and allocator destructors.
+        // Explicit stop here would remove media devices while objects are still alive.
         return received>0 && missing_ts==0 && nonmono==0 && valid==received ? 0 : 1;
     } catch (const std::exception &e) {
         std::cerr<<"REQUEST_PROBE_FAIL "<<e.what()<<"\n";
