@@ -196,7 +196,7 @@ int main(int argc, char **argv) {
         if (argc > 2) {
             timing_csv.open(argv[2]);
             if (!timing_csv) throw std::runtime_error("cannot open timing CSV");
-            timing_csv << "sequence,sensor_ts_ns,recv_mono_ns,recv_steady_ns,status\\n";
+            timing_csv << "sequence,sensor_ts_ns,recv_mono_ns,recv_steady_ns,status\n";
         }
         const auto until=std::chrono::steady_clock::now()+std::chrono::seconds(seconds);
         while (std::chrono::steady_clock::now() < until) {
@@ -216,7 +216,7 @@ int main(int argc, char **argv) {
             const auto sensor_ts=r->metadata().get(controls::SensorTimestamp);
             if (timing_csv)
                 timing_csv << r->sequence() << "," << (sensor_ts?std::to_string(*sensor_ts):"")
-                           << "," << rx_mono_ns << "," << rx_steady_ns << ",complete\\n";
+                           << "," << rx_mono_ns << "," << rx_steady_ns << ",complete\n";
             if (!sensor_ts) ++missing_ts;
             else {
                 const int64_t ts=*sensor_ts;
