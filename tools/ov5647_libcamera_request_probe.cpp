@@ -7,6 +7,7 @@
 #include <sys/mman.h>
 #include <unistd.h>
 #include <cerrno>
+#include <array>
 #include <chrono>
 #include <condition_variable>
 #include <cstdint>
@@ -104,7 +105,7 @@ int main(int argc, char **argv) {
             requests.push_back(std::move(request));
         }
         ControlList start_controls(camera->controls());
-        start_controls.set(controls::FrameDurationLimits, {16666, 16666});
+        start_controls.set(controls::FrameDurationLimits, std::array<int64_t, 2>{16666, 16666});
         if (camera->start(&start_controls)) throw std::runtime_error("camera start failed");
         for (auto &r : requests)
             if (camera->queueRequest(r.get())) throw std::runtime_error("queueRequest failed");
