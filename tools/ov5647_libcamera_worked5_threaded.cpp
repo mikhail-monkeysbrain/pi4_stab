@@ -133,6 +133,13 @@ int main(int argc, char **argv) {
         uint64_t captured=0, dropped=0;
         uint64_t received=0, valid=0, missing_ts=0, nonmono=0, cancelled=0;
         int64_t last_ts=0, min_gap=INT64_MAX, max_gap=0;
+        // Optional third argument: diagnostic per-step CSV, no FC publishing.
+        std::ofstream steps_csv;
+        if (argc > 3) {
+            steps_csv.open(argv[3]);
+            if (!steps_csv) throw std::runtime_error("cannot open WORKED5 steps CSV");
+            steps_csv << "sensor_ts_ns,dt_s,points,du_norm,dv_norm,scale_per_s,yaw_per_s,synthetic_dx_m,synthetic_dy_m,metric_valid\\n";
+        }
         std::thread worker([&] {
             for (;;) {
                 Sample sample;
@@ -182,7 +189,16 @@ int main(int argc, char **argv) {
                                     worked5_ms_sum+=std::chrono::duration<double,std::milli>(
                                         std::chrono::steady_clock::now()-t1).count();
                                     if (result.valid && std::isfinite(result.du_norm) &&
-                                        std::isfinite(result.dv_norm)) ++worked5_ok;
+                                        std::isfinite(result.dv_norm)) {
+                                        ++worked5_ok;
+                                        if (steps_csv) {
+                                            steps_csv << ts << "," << dt << "," << result.points
+                                                      << "," << result.du_norm << "," << result.dv_norm
+                                                      << "," << result.scale << "," << result.yaw
+                                                      << "," << result.dx_m << "," << result.dy_m
+                                                      << ",0\\n";
+                                        }
+                                    }
                                 }
                             }
                         }
@@ -260,6 +276,7 @@ int main(int argc, char **argv) {
         }
         sample_cv.notify_one();
         worker.join();
+        if (steps_csv) steps_csv.flush();
         std::cout<<"LIBCAMERA_WORKED5 pairs="<<pairs
                  <<" ransac_ok="<<ransac_ok
                  <<" worked5_valid="<<worked5_ok
