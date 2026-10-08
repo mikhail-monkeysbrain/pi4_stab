@@ -14,6 +14,8 @@
 #include <cerrno>
 #include <array>
 #include <chrono>
+#include <fstream>
+#include <ctime>
 #include <condition_variable>
 #include <cstdint>
 #include <cstring>
@@ -190,9 +192,21 @@ int main(int argc, char **argv) {
                 prev_sensor_ts=ts;
             }
         });
+        std::ofstream timing_csv;
+        if (argc > 2) {
+            timing_csv.open(argv[2]);
+            if (!timing_csv) throw std::runtime_error("cannot open timing CSV");
+            timing_csv << "sequence,sensor_ts_ns,recv_mono_ns,recv_steady_ns,status\\n";
+        }
         const auto until=std::chrono::steady_clock::now()+std::chrono::seconds(seconds);
         while (std::chrono::steady_clock::now() < until) {
             Request *r=completed.wait(std::chrono::milliseconds(1000));
+            struct timespec rx_clock {};
+            if (r && clock_gettime(CLOCK_MONOTONIC, &rx_clock) != 0)
+                throw std::runtime_error("clock_gettime CLOCK_MONOTONIC failed");
+            const int64_t rx_mono_ns = static_cast<int64_t>(rx_clock.tv_sec)*1000000000LL+rx_clock.tv_nsec;
+            const int64_t rx_steady_ns = std::chrono::duration_cast<std::chrono::nanoseconds>(
+                std::chrono::steady_clock::now().time_since_epoch()).count();
             if (!r) continue;
             if (r->status() != Request::RequestComplete) {
                 ++cancelled;
@@ -200,6 +214,9 @@ int main(int argc, char **argv) {
             }
             ++received;
             const auto sensor_ts=r->metadata().get(controls::SensorTimestamp);
+            if (timing_csv)
+                timing_csv << r->sequence() << "," << (sensor_ts?std::to_string(*sensor_ts):"")
+                           << "," << rx_mono_ns << "," << rx_steady_ns << ",complete\\n";
             if (!sensor_ts) ++missing_ts;
             else {
                 const int64_t ts=*sensor_ts;
@@ -235,6 +252,7 @@ int main(int argc, char **argv) {
             r->reuse(Request::ReuseBuffers);
             if (camera->queueRequest(r)) throw std::runtime_error("requeue failed");
         }
+        if (timing_csv) timing_csv.flush();
         camera->stop();
         {
             std::lock_guard<std::mutex> lk(sample_mu);
