@@ -37,7 +37,8 @@ def main():
     fc_cmd = [args.python, str(root / "tools/pi4_fc_readonly_capture.py"),
               "--port", args.port, "--baud", str(args.baud),
               "--seconds", str(args.seconds + 2), "--out", str(out / "fc.csv")]
-    camera_cmd = [str(binary), str(args.seconds)]
+    camera_csv = out / "camera_timestamps.csv"
+    camera_cmd = [str(binary), str(args.seconds), str(camera_csv)]
     fc_rc = -1
     camera_rc = -1
     with (out / "fc.log").open("w") as fc_log, (out / "camera.log").open("w") as camera_log:
@@ -71,6 +72,7 @@ def main():
                             for k in ("HEARTBEAT", "ATTITUDE", "RAW_IMU", "SCALED_IMU")),
           "clock_sync=UNVERIFIED", "no_fc_tx=1")
     print("CAMERA_LOG", out / "camera.log")
+    print("CAMERA_CSV", camera_csv)
     print("FC_LOG", out / "fc.log")
     print("FC_CSV", fc_csv)
     if (out / "camera.log").exists():
