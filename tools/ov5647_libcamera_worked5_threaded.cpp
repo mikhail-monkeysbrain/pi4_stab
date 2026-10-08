@@ -138,7 +138,7 @@ int main(int argc, char **argv) {
         if (argc > 3) {
             steps_csv.open(argv[3]);
             if (!steps_csv) throw std::runtime_error("cannot open WORKED5 steps CSV");
-            steps_csv << "sensor_ts_ns,dt_s,points,du_norm,dv_norm,scale_per_s,yaw_per_s,synthetic_dx_m,synthetic_dy_m,metric_valid\\n";
+            steps_csv << "sensor_ts_ns,dt_s,points,du_norm,dv_norm,scale_per_s,yaw_per_s,synthetic_dx_m,synthetic_dy_m,metric_valid\n";
         }
         std::thread worker([&] {
             for (;;) {
@@ -196,7 +196,7 @@ int main(int argc, char **argv) {
                                                       << "," << result.du_norm << "," << result.dv_norm
                                                       << "," << result.scale << "," << result.yaw
                                                       << "," << result.dx_m << "," << result.dy_m
-                                                      << ",0\\n";
+                                                      << ",0\n";
                                         }
                                     }
                                 }
