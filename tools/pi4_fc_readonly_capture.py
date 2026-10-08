@@ -16,6 +16,7 @@ FIELDS = [
     "recv_mono_ns", "msg_type", "fc_time_boot_ms", "fc_time_usec",
     "roll", "pitch", "yaw", "rollspeed", "pitchspeed", "yawspeed",
     "xacc", "yacc", "zacc", "xgyro", "ygyro", "zgyro",
+    "xmag", "ymag", "zmag",
     "system_status", "base_mode", "custom_mode", "src_system", "src_component",
 ]
 
@@ -44,7 +45,7 @@ def main():
                     time.sleep(0.002)
                     continue
                 kind = msg.get_type()
-                if kind not in ("HEARTBEAT", "ATTITUDE", "HIGHRES_IMU"):
+                if kind not in ("HEARTBEAT", "ATTITUDE", "RAW_IMU", "SCALED_IMU", "HIGHRES_IMU"):
                     continue
                 recv_ns = time.monotonic_ns()
                 row = {k: getattr(msg, k, "") for k in FIELDS}
@@ -59,6 +60,8 @@ def main():
     print(f"FC_READONLY out={output} elapsed_s={time.monotonic()-start:.2f} "
           f"heartbeat={counts.get('HEARTBEAT',0)} "
           f"attitude={counts.get('ATTITUDE',0)} "
+          f"raw_imu={counts.get('RAW_IMU',0)} "
+          f"scaled_imu={counts.get('SCALED_IMU',0)} "
           f"highres_imu={counts.get('HIGHRES_IMU',0)} "
           "clock_sync=UNVERIFIED tx=0")
     return 0 if counts.get("HEARTBEAT", 0) else 1
