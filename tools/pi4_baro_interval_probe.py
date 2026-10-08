@@ -24,13 +24,25 @@ def main():
                                      source_system=254, source_component=191,
                                      autoreconnect=False)
     try:
-        hb = conn.wait_heartbeat(timeout=8)
-        if hb is None:
-            raise SystemExit("ERROR: FC heartbeat timeout")
-        target_sys = conn.target_system
-        target_comp = hb.get_srcComponent()
-        if target_comp == 0:
-            target_comp = mavutil.mavlink.MAV_COMP_ID_AUTOPILOT1
+        # Ignore GCS/router heartbeats. Address only an actual autopilot.
+        deadline = time.monotonic() + 8
+        target_sys = None
+        target_comp = None
+        while time.monotonic() < deadline:
+            hb = conn.recv_match(type="HEARTBEAT", blocking=False)
+            if hb is None:
+                time.sleep(0.01)
+                continue
+            if (hb.get_srcSystem() <= 0 or
+                    hb.get_srcComponent() != mavutil.mavlink.MAV_COMP_ID_AUTOPILOT1 or
+                    hb.autopilot == mavutil.mavlink.MAV_AUTOPILOT_INVALID):
+                print(f"SKIP_HEARTBEAT sys={hb.get_srcSystem()} comp={hb.get_srcComponent()}", flush=True)
+                continue
+            target_sys = hb.get_srcSystem()
+            target_comp = hb.get_srcComponent()
+            break
+        if target_sys is None:
+            raise SystemExit("ERROR: autopilot heartbeat not found in 8 seconds; no commands sent")
         print(f"TARGET sys={target_sys} comp={target_comp}", flush=True)
         ids = {}
         for name in MESSAGES:
