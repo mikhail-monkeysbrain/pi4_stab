@@ -29,7 +29,8 @@ def main():
             raise SystemExit("ERROR: FC heartbeat timeout")
         target_sys = conn.target_system
         target_comp = hb.get_srcComponent()
-        if target_comp == 0:\n            target_comp = mavutil.mavlink.MAV_COMP_ID_AUTOPILOT1
+        if target_comp == 0:
+            target_comp = mavutil.mavlink.MAV_COMP_ID_AUTOPILOT1
         print(f"TARGET sys={target_sys} comp={target_comp}", flush=True)
         ids = {}
         for name in MESSAGES:
