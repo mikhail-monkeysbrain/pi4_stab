@@ -2010,6 +2010,7 @@ int main(int argc,char** argv){
   const std::string camdev=argv[1], lunadev=argv[2], fcdev=argv[3];
   const std::string csvpath=argv[4], yaml=argv[5];
   const double focal_scale=std::stod(argv[6]);
+  bool no_luna=false;
   bool guided=false;
   bool continuous_guided=false;
   int continuous_legs=1;
@@ -2042,6 +2043,7 @@ int main(int argc,char** argv){
     else if(a=="--continuous-legs" && i+1<argc){
       guided=true; continuous_guided=true; continuous_legs=std::stoi(argv[++i]);
     }
+    else if(a=="--no-luna") no_luna=true;
     else if(a=="--require-armed") require_armed=true;
     else if(a=="--nominal-target") nominal_target_only=true;
     else if(a=="--return-gui") return_gui=true;
@@ -2146,7 +2148,9 @@ int main(int argc,char** argv){
     calib.K=(cv::Mat_<double>(3,3)<<calib.fx,0,calib.cx,0,calib.fy,calib.cy,0,0,1);
 
     Camera cam; cam.openDev(camdev);
-    LunaReader luna; luna.start(lunadev);
+    LunaReader luna;
+    if(!no_luna) luna.start(lunadev);
+    else std::cerr<<"NO-LUNA: дальномер не запущен; метрическая навигация требует отдельного источника AGL.\n";
     FlowFc fc; fc.start(fcdev);
     if(!remote_log_path.empty()){
       if(fc.startRemoteLog(remote_log_path)){
