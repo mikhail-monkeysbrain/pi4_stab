@@ -4074,7 +4074,7 @@ int main(int argc,char** argv){
                 vz_csv.open(vz_path,std::ios::out|std::ios::trunc);
                 if(vz_csv.is_open())
                   vz_csv<<"frame,dt_s,raw_valid,raw_scale_rate,highres_valid,"
-                           "pixel_field_valid,pixel_field_points,fx,fy,"
+                           "attitude_gyro_valid,pixel_field_valid,pixel_field_points,fx,fy,"
                            "a00,a01,a10,a11,affine_rms_px,const_rms_px\n";
               }
               if(vz_csv.is_open()){
