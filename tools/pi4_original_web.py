@@ -26,9 +26,12 @@ def main():
     proc=None
     state={"flow_received":0,"fc_messages":0,"fc":"CONNECTING","camera":"STARTING"}
     stop=threading.Event()
+    last_logged_flow=0
+    last_logged_fc=0
+    web.log_event("WARN","Pi4: VO TX отключён, AGL отсутствует")
     lock=threading.Lock()
     def runtime():
-        nonlocal proc
+        nonlocal proc,last_logged_flow,last_logged_fc
         env=dict(os.environ)
         proc=subprocess.Popen([sys.executable,"-u",str(root/"tools/pi4_web_runtime.py"),
              "--port",args.serial,"--baud",str(args.baud),"--http-port","18080"],
@@ -39,6 +42,14 @@ def main():
                 with urllib.request.urlopen("http://127.0.0.1:18080/api/status",timeout=0.3) as resp:
                     data=json.load(resp)
                 with lock:state.update(data)
+                flow_count=int(data.get("flow_received",0))
+                fc_count=int(data.get("fc_messages",0))
+                if flow_count//100>last_logged_flow//100:
+                    web.log_event("INFO",f"Pi4 WORKED5: {flow_count} результатов, invalid={data.get('flow_invalid',0)}")
+                if fc_count//200>last_logged_fc//200:
+                    web.log_event("INFO",f"Pi4 FC: {fc_count} сообщений MAVLink")
+                last_logged_flow=flow_count
+                last_logged_fc=fc_count
                 raw={"type":"telemetry","mono_ns":time.monotonic_ns(),
                      "frame":data.get("flow_received",0),"valid":int(data.get("flow_received",0)>0),
                      "tracked":0,"inliers":0,"worked5_valid":bool(data.get("flow_received",0)),
