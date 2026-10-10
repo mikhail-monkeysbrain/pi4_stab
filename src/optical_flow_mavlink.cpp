@@ -2937,11 +2937,15 @@ int main(int argc,char** argv){
         double lm=0; int strength=0; int64_t lns=0;
         bool hl=luna.latest(&lm,&strength,&lns);
         if(pi4_baro){
-          // Pi4 bench-only: fixed 20 cm must not depend on FC barometer
-          // availability, timestamps, or pressure-stream interruptions.
-          lm=0.20;
-          lns=now;
-          hl=true;
+          double pressure=0.0; int64_t pressure_ns=0;
+          hl=false;
+          if(fc.latestBaro(&pressure,&pressure_ns) && now-pressure_ns<500000000LL){
+            if(pi4_baro_reference_hpa==0.0)pi4_baro_reference_hpa=pressure;
+            const double delta_h=44330.0*(1.0-std::pow(pressure/pi4_baro_reference_hpa,0.190294957));
+            lm=pi4_baro_initial_height_m+delta_h;
+            lns=pressure_ns;
+            hl=std::isfinite(lm) && lm>0.05;
+          }
         }
         const double lage=hl?(now-lns)*1e-6:1e9;
         bool range_sent=false;
