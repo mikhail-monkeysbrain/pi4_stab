@@ -81,7 +81,10 @@ int main(int argc,char **argv) {
                         ++invalid_dt;
                     } else {
                         std::vector<cv::Point2f> pts,next;
-                        cv::goodFeaturesToTrack(prev,pts,300,0.01,8);
+                        cv::Mat roi_mask=cv::Mat::zeros(prev.size(),CV_8UC1);
+                        const cv::Rect roi(128,154,384,278);
+                        cv::rectangle(roi_mask,roi,cv::Scalar(255),cv::FILLED);
+                        cv::goodFeaturesToTrack(prev,pts,300,0.01,8,roi_mask);
                         if (pts.size()>=20) {
                             std::vector<uchar> ok;
                             std::vector<float> err;
