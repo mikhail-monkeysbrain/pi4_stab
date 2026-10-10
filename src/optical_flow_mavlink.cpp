@@ -1414,9 +1414,7 @@ struct FlowFc {
   }
 };
 
-static bool g_pi4_block_flow_tx=false;
 bool sendOpticalFlow(int fd,uint64_t time_usec,float rate_x,float rate_y,uint8_t quality){
-  if(g_pi4_block_flow_tx) return false;
   if(fd<0 || !std::isfinite(rate_x) || !std::isfinite(rate_y))return false;
   mavlink_message_t msg{};
   mavlink_msg_optical_flow_pack(
@@ -2215,8 +2213,7 @@ int main(int argc,char** argv){
     if(pi4_baro && (!std::isfinite(pi4_baro_initial_height_m) || pi4_baro_initial_height_m<=0.05))
       throw std::runtime_error("PI4 BARO: initial camera height must be > 0.05 m");
     if(pi4_runtime_safe){
-      g_pi4_block_flow_tx=true;
-      std::cerr<<"PI4 SAFE RUNTIME: OPTICAL_FLOW TX blocked; no rangefinder; FC RX enabled.\\n";
+      std::cerr<<"PI4: original OPTICAL_FLOW TX enabled; no synthetic DISTANCE_SENSOR.\\n";
     }
     FlowFc fc; fc.start(fcdev);
     double pi4_baro_reference_hpa=0.0;
