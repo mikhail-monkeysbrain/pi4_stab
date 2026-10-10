@@ -1130,6 +1130,12 @@ def start_runtime(fast_start=False):
         ensure_router()
         env=os.environ.copy()
         env["MONKEYS_LOCAL_GUI"]="0"
+        if os.environ.get("MONKEYS_PI4_RUNTIME_SAFE")=="1":
+            env["MONKEYS_PI4_RUNTIME_SAFE"]="1"
+            env["MONKEYS_PI4_OV5647"]="1"
+            env["MONKEYS_NO_LUNA"]="1"
+            env["MONKEYS_STABILISED_UNIFIED_PUBLISH"]="0"
+            env["MONKEYS_RAW_UNIFIED_PUBLISH"]="0"
         env["MONKEYS_FC"]=FC_ENDPOINT
         # Default Web contour remains Variant B stabilised. Experimental
         # RAW_OF_CONTRACT_V1 is opt-in via the parent environment and requires
@@ -2521,6 +2527,10 @@ class H(BaseHTTPRequestHandler):
     def do_POST(self):
         p=urlparse(self.path).path
         try:
+            if os.environ.get("MONKEYS_PI4_RUNTIME_SAFE")=="1" and (
+                p.startswith("/api/fc/") or p in ("/api/geometry",)
+            ):
+                return self.send_json({"error":"Pi4: управление FC и геометрией заблокировано до подтверждения AGL"},403)
             if p=="/api/config":
                 if running(): raise RuntimeError("Остановите flight runtime перед изменением стартовых параметров")
                 self.send_json({"ok":True,"runtime":save_config(self.body_json())})
