@@ -13,7 +13,14 @@ def main():
     print("Подключение к FC:", args.connect, flush=True)
     link = mavutil.mavlink_connection(args.connect, autoreconnect=True)
     link.wait_heartbeat(timeout=15)
-    print("Heartbeat получен. Ожидание SCALED_PRESSURE... Ctrl+C — выход.", flush=True)
+    # Request pressure and EKF altitude telemetry without changing FC parameters.
+    for message_id in (mavutil.mavlink.MAVLINK_MSG_ID_SCALED_PRESSURE,
+                       mavutil.mavlink.MAVLINK_MSG_ID_GLOBAL_POSITION_INT):
+        link.mav.command_long_send(
+            link.target_system, link.target_component,
+            mavutil.mavlink.MAV_CMD_SET_MESSAGE_INTERVAL, 0,
+            message_id, 100000, 0, 0, 0, 0, 0)
+    print("Heartbeat получен. Запрошены SCALED_PRESSURE и GLOBAL_POSITION_INT (10 Гц). Ctrl+C — выход.", flush=True)
     baseline = None
     last_pressure = None
     last_ekf = None
