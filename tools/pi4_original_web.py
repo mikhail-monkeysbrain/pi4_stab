@@ -82,6 +82,41 @@ def main():
             if proc.poll() is not None:
                 with lock:state["camera"]="STOPPED"
                 break
+    # Keep FC 3D in real metres. Show WORKED5 separately in unscaled image coordinates.
+    visual_panel = r"""
+<div id="pi4-flow-panel" style="position:fixed;right:12px;bottom:12px;z-index:30;background:#07121cef;border:1px solid #426078;border-radius:8px;padding:8px;color:#d6e9fa;font:12px sans-serif;pointer-events:none">
+ <div>WORKED5 · траектория без масштаба (НЕ метры)</div>
+ <canvas id="pi4-flow-canvas" width="260" height="170"></canvas>
+ <div id="pi4-flow-info">Ожидание кадров...</div>
+</div>
+<script>
+(function(){
+ const c=document.getElementById('pi4-flow-canvas'),ctx=c.getContext('2d');
+ let trail=[],lastSamples=0,origin=null;
+ async function tick(){
+  try{
+   const r=await fetch('/api/pi4/status',{cache:'no-store'}),d=await r.json();
+   const u=Number(d.visual_flow_u),v=Number(d.visual_flow_v),n=Number(d.visual_flow_samples);
+   if(!Number.isFinite(u)||!Number.isFinite(v)||!Number.isFinite(n))return;
+   if(n<lastSamples){trail=[];origin=null}
+   if(!origin)origin=[u,v];
+   if(n!==lastSamples){trail.push([u-origin[0],v-origin[1]]);if(trail.length>400)trail.shift();lastSamples=n}
+   ctx.fillStyle='#07121c';ctx.fillRect(0,0,c.width,c.height);
+   ctx.strokeStyle='#24445d';ctx.beginPath();ctx.moveTo(130,0);ctx.lineTo(130,170);ctx.moveTo(0,85);ctx.lineTo(260,85);ctx.stroke();
+   const extent=Math.max(.02,...trail.map(p=>Math.max(Math.abs(p[0]),Math.abs(p[1]))));
+   const scale=Math.min(110/extent,4000);
+   ctx.strokeStyle='#20b8ff';ctx.lineWidth=2;ctx.beginPath();
+   trail.forEach((p,i)=>{const x=130+p[0]*scale,y=85+p[1]*scale;i?ctx.lineTo(x,y):ctx.moveTo(x,y)});
+   ctx.stroke();
+   const last=trail[trail.length-1]||[0,0];ctx.fillStyle='#17d878';ctx.beginPath();ctx.arc(130+last[0]*scale,85+last[1]*scale,4,0,Math.PI*2);ctx.fill();
+   document.getElementById('pi4-flow-info').textContent='Кадры: '+n+' · FC EKF: '+(d.ekf_valid?'есть позиция':'нет позиции');
+  }catch(e){document.getElementById('pi4-flow-info').textContent='Нет связи с WORKED5'}
+ }
+ setInterval(tick,400);tick();
+})();
+</script>
+"""
+    web.HTML=web.HTML.replace("</body>",visual_panel+"</body>")
     original_get=web.H.do_GET
     def safe_get(self):
         if self.path=="/api/pi4/status":
