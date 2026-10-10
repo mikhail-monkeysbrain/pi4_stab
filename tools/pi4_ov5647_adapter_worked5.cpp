@@ -2,6 +2,7 @@
 #include "pi4_ov5647_capture.hpp"
 #include "worked5_estimator.hpp"
 #include <opencv2/imgproc.hpp>
+#include <opencv2/imgcodecs.hpp>
 #include <opencv2/video/tracking.hpp>
 #include <opencv2/calib3d.hpp>
 #include <thread>
@@ -19,6 +20,8 @@
 #include <unistd.h>
 #include <sys/socket.h>
 #include <sys/un.h>
+#include <netinet/in.h>
+#include <arpa/inet.h>
 #include <cstring>
 
 int main(int argc,char **argv) {
@@ -131,10 +134,30 @@ int main(int argc,char **argv) {
                 prev_sensor_ts=ts;
             }
         });
+        int preview_fd=-1;
+        const char* preview_port=std::getenv("PI4_PREVIEW_UDP_PORT");
+        sockaddr_in preview_addr{};
+        if(preview_port && *preview_port) {
+            preview_fd=socket(AF_INET,SOCK_DGRAM|SOCK_NONBLOCK,0);
+            preview_addr.sin_family=AF_INET;
+            preview_addr.sin_port=htons(static_cast<uint16_t>(std::stoi(preview_port)));
+            inet_pton(AF_INET,"127.0.0.1",&preview_addr.sin_addr);
+        }
+        auto next_preview=std::chrono::steady_clock::now();
         const auto until=std::chrono::steady_clock::now()+std::chrono::seconds(seconds);
         while(std::chrono::steady_clock::now()<until) {
             pi4_capture::Frame frame;
             if(!camera.next(frame,1000)) continue;
+            if(preview_fd>=0 && std::chrono::steady_clock::now()>=next_preview) {
+                next_preview=std::chrono::steady_clock::now()+std::chrono::milliseconds(200);
+                std::vector<uchar> jpg;
+                if(cv::imencode(".jpg",frame.gray,jpg,{cv::IMWRITE_JPEG_QUALITY,55}) && jpg.size()+4<60000) {
+                    std::vector<uchar> payload={77,74,80,71};
+                    payload.insert(payload.end(),jpg.begin(),jpg.end());
+                    sendto(preview_fd,payload.data(),payload.size(),MSG_DONTWAIT,
+                           reinterpret_cast<sockaddr*>(&preview_addr),sizeof(preview_addr));
+                }
+            }
             {
                 std::lock_guard<std::mutex> lk(sample_mu);
                 ++captured;
@@ -153,6 +176,7 @@ int main(int argc,char **argv) {
         worker.join();
         if(steps_csv) steps_csv.flush();
         if(stream_fd>=0) close(stream_fd);
+        if(preview_fd>=0) close(preview_fd);
         std::cout<<"PI4_ADAPTER_WORKED5 pairs="<<pairs
                  <<" ransac_ok="<<ransac_ok<<" worked5_valid="<<worked5_ok
                  <<" invalid_dt="<<invalid_dt<<" captured="<<captured
