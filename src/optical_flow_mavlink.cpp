@@ -2288,7 +2288,9 @@ int main(int argc,char** argv){
     constexpr double kTerrainStepAbsM=0.18;
     constexpr double kTerrainStepRatio=1.50;
     constexpr int64_t kTerrainGuardNs=400000000LL; // 0.4 s
-    constexpr double kMaxFlowPipelineAgeMs=80.0;
+    // Pi4 CSI/libcamera timestamps have a substantially longer capture-to-publish age.
+    // Keep the original RPi5 limit unchanged; allow Pi4 ground-bench publication.
+    const double kMaxFlowPipelineAgeMs=pi4_ov5647 ? 400.0 : 80.0;
     // TEMPORAL_OF_AGGREGATE_V1
     // Preserve angular displacement across short causal35 intervals and publish
     // one mean flow rate over the complete contiguous accumulation window.
