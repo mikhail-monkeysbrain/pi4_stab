@@ -23,6 +23,8 @@
 #include <netinet/in.h>
 #include <arpa/inet.h>
 #include <cstring>
+#include <cstdio>
+#include <cstdlib>
 
 int main(int argc,char **argv) {
     try {
@@ -31,6 +33,19 @@ int main(int argc,char **argv) {
         pi4_capture::Ov5647Capture camera;
         camera.start();
         cv::setNumThreads(2);
+        // Reuse RPi5 feature ROI and max-features settings, supplied by launcher.
+        double rx0=0.20,ry0=0.32,rx1=0.80,ry1=0.90;
+        int max_features=500;
+        if(const char* value=std::getenv("MONKEYS_FEATURE_ROI")) {
+            if(std::sscanf(value,"%lf %lf %lf %lf",&rx0,&ry0,&rx1,&ry1)!=4)
+                throw std::runtime_error("invalid MONKEYS_FEATURE_ROI");
+        }
+        if(const char* value=std::getenv("MONKEYS_MAX_FEATURES"))
+            max_features=std::stoi(value);
+        if(!(rx0>=0 && ry0>=0 && rx1<=1 && ry1<=1 && rx1>rx0 && ry1>ry0 && max_features>=20 && max_features<=2000))
+            throw std::runtime_error("invalid ROI or feature count");
+        const cv::Rect roi(cv::Point(static_cast<int>(rx0*640),static_cast<int>(ry0*480)),
+                           cv::Point(static_cast<int>(rx1*640),static_cast<int>(ry1*480)));
         cv::Mat prev;
         int64_t prev_sensor_ts=0;
         uint64_t pairs=0, ransac_ok=0, worked5_ok=0, invalid_dt=0;
@@ -82,9 +97,8 @@ int main(int argc,char **argv) {
                     } else {
                         std::vector<cv::Point2f> pts,next;
                         cv::Mat roi_mask=cv::Mat::zeros(prev.size(),CV_8UC1);
-                        const cv::Rect roi(128,154,384,278);
                         cv::rectangle(roi_mask,roi,cv::Scalar(255),cv::FILLED);
-                        cv::goodFeaturesToTrack(prev,pts,300,0.01,8,roi_mask);
+                        cv::goodFeaturesToTrack(prev,pts,max_features,0.01,8,roi_mask);
                         if (pts.size()>=20) {
                             std::vector<uchar> ok;
                             std::vector<float> err;
@@ -162,7 +176,7 @@ int main(int argc,char **argv) {
                 std::vector<uchar> jpg;
                 cv::Mat annotated;
                 cv::cvtColor(frame.gray,annotated,cv::COLOR_GRAY2BGR);
-                cv::rectangle(annotated,cv::Point(128,154),cv::Point(512,432),cv::Scalar(0,220,255),2);
+                cv::rectangle(annotated,roi,cv::Scalar(0,220,255),2);
                 std::vector<cv::Point2f> points;
                 { std::lock_guard<std::mutex> lk(overlay_mu); points=overlay_points; }
                 for(const auto& point:points) cv::circle(annotated,point,2,cv::Scalar(0,255,0),-1);
