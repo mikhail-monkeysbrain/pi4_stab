@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Pi4 camera + FC telemetry + HTTP dashboard. VO TX intentionally gated."""
 import argparse
+import fcntl
 import json
 import os
 from pathlib import Path
@@ -25,6 +26,12 @@ def main():
     ap.add_argument("--baud",type=int,default=460800)
     ap.add_argument("--http-port",type=int,default=8080)
     args=ap.parse_args()
+    lock_file=open('/tmp/pi4_stab_camera_runtime.lock','w')
+    try:
+        fcntl.flock(lock_file,fcntl.LOCK_EX|fcntl.LOCK_NB)
+    except BlockingIOError:
+        print('PI4_CAMERA_BUSY: другой runtime использует камеру',flush=True)
+        return 3
     from pymavlink import mavutil
     root=Path(__file__).resolve().parent.parent
     state={"camera":"STARTING","fc":"CONNECTING","flow_received":0,"flow_invalid":0,
@@ -67,6 +74,10 @@ def main():
         print(f"PI4_WEB_RUNTIME http://0.0.0.0:{args.http_port} vo_tx=BLOCKED",flush=True)
         try:
             while not stop.is_set():
+                if camera is not None and camera.poll() is not None and camera.returncode != 0:
+                    with lock:state['camera']='FAILED';state['runtime']='CAMERA_ERROR'
+                    print('PI4_CAMERA_ERROR: acquire failed; auto restart disabled',flush=True)
+                    break
                 if camera is None or camera.poll() is not None:
                     camera=subprocess.Popen([str(binary),"120"],cwd=root,env=env)
                     with lock:state["camera"]="RUNNING"
