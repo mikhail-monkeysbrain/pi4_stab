@@ -15,9 +15,10 @@ def progress(elapsed, total, camera, fc):
     width = 30
     filled = round(width * ratio)
     bar = "#" * filled + "-" * (width - filled)
-    print(f"\rRUN [{bar}] {ratio * 100:5.1f}% "
-          f"{elapsed:5.1f}/{total}s camera={'RUN' if camera is None else camera} "
-          f"fc={'RUN' if fc is None else fc}", end="", flush=True)
+    status = (f"RUN [{bar}] {ratio * 100:5.1f}% "
+              f"{elapsed:5.1f}/{total}s camera={'RUN' if camera is None else camera} "
+              f"fc={'RUN' if fc is None else fc}")
+    print("\\r" + status.ljust(92), end="", flush=True)
 
 
 def main():
