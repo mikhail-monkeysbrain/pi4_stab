@@ -37,7 +37,9 @@ def main():
     state={"camera":"STARTING","fc":"CONNECTING","flow_received":0,"flow_invalid":0,
            "flow_last_age_s":None,"fc_messages":0,"attitude":None,"local_position":None,
            "vo_tx":"BLOCKED","reason":"No verified metric AGL; provisional OV5647 calibration",
-           "runtime":"RUNNING","armed":False,"ekf_valid":False}
+           "runtime":"RUNNING","armed":False,"ekf_valid":False,
+           "visual_flow_u":0.0,"visual_flow_v":0.0,"visual_flow_units":"normalized image displacement",
+           "visual_flow_samples":0,"visual_flow_last":None}
     lock=threading.Lock()
     stop=threading.Event()
     class Handler(BaseHTTPRequestHandler):
@@ -109,6 +111,13 @@ def main():
                     previous=ts
                     with lock:
                         state["flow_received"]+=1;state["_last_flow"]=time.monotonic()
+                        # Display-only integral: NOT metres and never transmitted to FC.
+                        du=float(packet[3]);dv=float(packet[4])
+                        if all(__import__("math").isfinite(v) and abs(v)<1.0 for v in (du,dv)):
+                            state["visual_flow_u"]+=du
+                            state["visual_flow_v"]+=dv
+                            state["visual_flow_samples"]+=1
+                            state["visual_flow_last"]={"du":du,"dv":dv,"tracked":int(packet[2])}
                 except socket.timeout:pass
                 except (ValueError,IndexError,UnicodeDecodeError):
                     with lock:state["flow_invalid"]+=1
