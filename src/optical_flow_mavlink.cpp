@@ -2013,6 +2013,7 @@ int main(int argc,char** argv){
   const double focal_scale=std::stod(argv[6]);
   bool no_luna=false;
   bool pi4_ov5647=false;
+  bool pi4_camera_only=false;
   bool guided=false;
   bool continuous_guided=false;
   int continuous_legs=1;
@@ -2047,6 +2048,7 @@ int main(int argc,char** argv){
     }
     else if(a=="--no-luna") no_luna=true;
     else if(a=="--pi4-ov5647") pi4_ov5647=true;
+    else if(a=="--pi4-camera-only") { pi4_camera_only=true; pi4_ov5647=true; }
     else if(a=="--require-armed") require_armed=true;
     else if(a=="--nominal-target") nominal_target_only=true;
     else if(a=="--return-gui") return_gui=true;
@@ -2160,6 +2162,27 @@ int main(int argc,char** argv){
     LunaReader luna;
     if(!no_luna) luna.start(lunadev);
     else std::cerr<<"NO-LUNA: дальномер не запущен; метрическая навигация требует отдельного источника AGL.\n";
+    if(pi4_camera_only){
+      // Diagnostic inside original binary: no FC connection or MAVLink TX.
+      uint64_t frames=0;
+      int64_t first_ns=0,last_ns=0;
+      const int64_t until_ns=monoNs()+15000000000LL;
+      while(g_running && monoNs()<until_ns){
+        pi4_capture::Frame f;
+        if(!csi_camera->next(f,1000)) continue;
+        if(!first_ns) first_ns=f.sensor_timestamp_ns;
+        last_ns=f.sensor_timestamp_ns;
+        ++frames;
+      }
+      const auto st=csi_camera->stats();
+      std::cout<<"ORIGINAL_RUNTIME_CAMERA_TEST frames="<<frames
+               <<" missing_ts="<<st.missing_timestamp
+               <<" nonmonotonic_ts="<<st.nonmonotonic_timestamp
+               <<" first_ts_ns="<<first_ns<<" last_ts_ns="<<last_ns
+               <<" no_fc_connection=1 no_mavlink_tx=1\n";
+      return frames>0 && st.missing_timestamp==0 &&
+             st.nonmonotonic_timestamp==0 ? 0 : 1;
+    }
     FlowFc fc; fc.start(fcdev);
     if(!remote_log_path.empty()){
       if(fc.startRemoteLog(remote_log_path)){
