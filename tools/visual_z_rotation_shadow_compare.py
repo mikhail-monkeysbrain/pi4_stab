@@ -34,7 +34,7 @@ def main():
             dt, rate = val(r, "dt_s"), val(r, "raw_scale_rate")
             fx, fy = val(r, "fx"), val(r, "fy")
             a00, a11 = val(r, "a00"), val(r, "a11")
-            if (val(r, "raw_valid") != 1 or val(r, "highres_valid") != 1
+            if (val(r, "raw_valid") != 1 or (val(r, "highres_valid") != 1 and val(r, "attitude_gyro_valid") != 1)
                     or val(r, "pixel_field_valid") != 1 or dt is None
                     or not 0 < dt < 0.2 or rate is None or fx is None
                     or fy is None or min(fx, fy) <= 0 or a00 is None or a11 is None):
