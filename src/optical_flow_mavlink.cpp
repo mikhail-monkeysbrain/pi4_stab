@@ -20,6 +20,7 @@
 #include "metric_shadow_sync.hpp"
 #include "metric_shadow_range_sync.hpp"
 #include "worked5_estimator.hpp"
+#include "pi4_ov5647_capture.hpp"
 #include "variant_b_angular_shadow.hpp"
 #include "imu_dead_reckoning.hpp"
 
@@ -2011,6 +2012,7 @@ int main(int argc,char** argv){
   const std::string csvpath=argv[4], yaml=argv[5];
   const double focal_scale=std::stod(argv[6]);
   bool no_luna=false;
+  bool pi4_ov5647=false;
   bool guided=false;
   bool continuous_guided=false;
   int continuous_legs=1;
@@ -2044,6 +2046,7 @@ int main(int argc,char** argv){
       guided=true; continuous_guided=true; continuous_legs=std::stoi(argv[++i]);
     }
     else if(a=="--no-luna") no_luna=true;
+    else if(a=="--pi4-ov5647") pi4_ov5647=true;
     else if(a=="--require-armed") require_armed=true;
     else if(a=="--nominal-target") nominal_target_only=true;
     else if(a=="--return-gui") return_gui=true;
@@ -2147,7 +2150,13 @@ int main(int argc,char** argv){
     calib.fx*=focal_scale; calib.fy*=focal_scale;
     calib.K=(cv::Mat_<double>(3,3)<<calib.fx,0,calib.cx,0,calib.fy,calib.cy,0,0,1);
 
-    Camera cam; cam.openDev(camdev);
+    Camera cam;
+    std::unique_ptr<pi4_capture::Ov5647Capture> csi_camera;
+    if(pi4_ov5647){
+      csi_camera=std::make_unique<pi4_capture::Ov5647Capture>();
+      csi_camera->start();
+      std::cerr<<"CAMERA: OV5647 libcamera capture in original runtime\n";
+    }else cam.openDev(camdev);
     LunaReader luna;
     if(!no_luna) luna.start(lunadev);
     else std::cerr<<"NO-LUNA: дальномер не запущен; метрическая навигация требует отдельного источника AGL.\n";
@@ -2565,9 +2574,12 @@ int main(int argc,char** argv){
     bool startup_clock_reset_done=false;
 
     while(g_running){
-      pollfd p{cam.fd,POLLIN,0};
       const int64_t camera_poll_enter_ns=monoNs();
-      const int pr=poll(&p,1,20);
+      int pr=1;
+      if(!pi4_ov5647){
+        pollfd p{cam.fd,POLLIN,0};
+        pr=poll(&p,1,20);
+      }
       const int64_t camera_poll_exit_ns=monoNs();
       if(pr<0){if(errno==EINTR)continue;fail("camera poll");}
       if(pr<=0)continue;
@@ -2621,6 +2633,22 @@ int main(int argc,char** argv){
       int64_t camera_dq_last_exit_ns=0;
       double camera_dq_ioctl_max_ms=0.0;
       uint64_t camera_dq_count=0;
+      if(pi4_ov5647){
+        pi4_capture::Frame captured;
+        const int64_t dq_enter_ns=monoNs();
+        if(!csi_camera->next(captured,1000)) continue;
+        camera_dq_first_enter_ns=dq_enter_ns;
+        camera_dq_last_exit_ns=monoNs();
+        camera_dq_ioctl_max_ms=(camera_dq_last_exit_ns-dq_enter_ns)*1e-6;
+        camera_dq_count=1;
+        ++fps_dqbuf; ++w5w_dqbuf;
+        ts=captured.sensor_timestamp_ns;
+        selected_v4l2_ts_ns=ts;
+        selected_dq_mono_ns=camera_dq_last_exit_ns;
+        // Preserve the original downstream MJPEG/decode pipeline.
+        if(!cv::imencode(".jpg",captured.gray,latest_jpeg))
+          throw std::runtime_error("OV5647 JPEG encode failed");
+      }else{
       while(g_running){
         v4l2_buffer b{}; b.type=V4L2_BUF_TYPE_VIDEO_CAPTURE; b.memory=V4L2_MEMORY_MMAP;
         const int64_t dq_enter_ns=monoNs();
@@ -2652,6 +2680,7 @@ int main(int argc,char** argv){
         selected_dq_mono_ns=dq_mono_ns;
         selected_v4l2_flags=b.flags;
         if(xioctl(cam.fd,VIDIOC_QBUF,&b)<0)fail("VIDIOC_QBUF");
+      }
       }
       const int64_t camera_dq_batch_exit_ns=monoNs();
       if(latest_jpeg.empty()) continue;
