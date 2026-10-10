@@ -84,7 +84,12 @@ elif (( FREE_MB < 1024 )); then
 fi
 
 if [[ "${MONKEYS_FAST_RESTART:-0}" != "1" ]]; then
-  bash "$ROOT/scripts/audit_geometry.sh"
+  if [[ "$PI4_OV5647" == "1" ]]; then
+    echo "PI4: аудит геометрии RPi5 пропущен; параметры FC не изменяются."
+    echo "ВНИМАНИЕ: геометрия установки OV5647 на Pi4 ещё не подтверждена."
+  else
+    bash "$ROOT/scripts/audit_geometry.sh"
+  fi
   if [[ "${MONKEYS_STABILISED_UNIFIED_PUBLISH:-0}" == "1" || "${MONKEYS_STABILISED_UNIFIED_PUBLISH:-0}" == "true" || "${MONKEYS_STABILISED_UNIFIED_PUBLISH:-0}" == "yes" ]]; then
     if [[ "${MONKEYS_RAW_UNIFIED_PUBLISH:-0}" == "1" || "${MONKEYS_RAW_UNIFIED_PUBLISH:-0}" == "true" || "${MONKEYS_RAW_UNIFIED_PUBLISH:-0}" == "yes" ]]; then
       echo "ОШИБКА: MONKEYS_STABILISED_UNIFIED_PUBLISH и MONKEYS_RAW_UNIFIED_PUBLISH взаимоисключающие" >&2
