@@ -386,6 +386,8 @@ struct FlowFc {
   std::mutex mu;
   FlowFcLocal local{};
   FlowEkfStatus ekf{};
+  double baro_pressure_hpa=0.0;
+  int64_t baro_recv_ns=0;
   FlowFcGyro gyro{};
   FlowFcImu imu{};
   imu_dr::State imu_dr_state{};
@@ -876,6 +878,7 @@ struct FlowFc {
       // Request HIGHRES first and ATTITUDE last.  Some ArduPilot telemetry
       // configurations clamp/override selected streams; repeat critical
       // requests after the rest of the subscriptions have been installed.
+      requestRate(fd,sys,comp,MAVLINK_MSG_ID_SCALED_PRESSURE,10);
       requestRate(fd,sys,comp,MAVLINK_MSG_ID_LOCAL_POSITION_NED,20);
       requestRate(fd,sys,comp,MAVLINK_MSG_ID_EKF_STATUS_REPORT,5);
       requestRate(fd,sys,comp,MAVLINK_MSG_ID_HIGHRES_IMU,100);
@@ -1250,6 +1253,14 @@ struct FlowFc {
               outputs.pwm={q.servo1_raw,q.servo2_raw,q.servo3_raw,q.servo4_raw,
                            q.servo5_raw,q.servo6_raw,q.servo7_raw,q.servo8_raw};
               outputs.recv_ns=monoNs(); outputs.valid=true;
+            } else if(m.msgid==MAVLINK_MSG_ID_SCALED_PRESSURE){
+              mavlink_scaled_pressure_t q{};
+              mavlink_msg_scaled_pressure_decode(&m,&q);
+              if(std::isfinite(q.press_abs) && q.press_abs>100.0f){
+                std::lock_guard<std::mutex> l(mu);
+                baro_pressure_hpa=q.press_abs;
+                baro_recv_ns=monoNs();
+              }
             } else if(m.msgid==MAVLINK_MSG_ID_EKF_STATUS_REPORT){
               mavlink_ekf_status_report_t q{}; mavlink_msg_ekf_status_report_decode(&m,&q);
               std::lock_guard<std::mutex> l(mu);
@@ -1266,6 +1277,14 @@ struct FlowFc {
         }
       }
     });
+  }
+
+  bool latestBaro(double* pressure_hpa,int64_t* recv_ns){
+    std::lock_guard<std::mutex> l(mu);
+    if(baro_recv_ns==0)return false;
+    *pressure_hpa=baro_pressure_hpa;
+    *recv_ns=baro_recv_ns;
+    return true;
   }
 
   bool latestLocal(FlowFcLocal* out,double* age_ms,uint64_t* count=nullptr){
@@ -2014,6 +2033,8 @@ int main(int argc,char** argv){
   const std::string csvpath=argv[4], yaml=argv[5];
   const double focal_scale=std::stod(argv[6]);
   bool no_luna=false;
+  bool pi4_baro=false;
+  double pi4_baro_initial_height_m=0.18;
   bool pi4_runtime_safe=false;
   bool pi4_ov5647=false;
   bool pi4_camera_only=false;
@@ -2050,6 +2071,10 @@ int main(int argc,char** argv){
       guided=true; continuous_guided=true; continuous_legs=std::stoi(argv[++i]);
     }
     else if(a=="--no-luna") no_luna=true;
+    else if(a=="--pi4-baro-height" && i+1<argc){
+      pi4_baro=true; no_luna=true;
+      pi4_baro_initial_height_m=std::stod(argv[++i]);
+    }
     else if(a=="--pi4-runtime-safe") { pi4_runtime_safe=true; no_luna=true; pi4_ov5647=true; }
     else if(a=="--pi4-ov5647") pi4_ov5647=true;
     else if(a=="--pi4-camera-only") { pi4_camera_only=true; pi4_ov5647=true; }
@@ -2187,11 +2212,14 @@ int main(int argc,char** argv){
       return frames>0 && st.missing_timestamp==0 &&
              st.nonmonotonic_timestamp==0 ? 0 : 1;
     }
+    if(pi4_baro && (!std::isfinite(pi4_baro_initial_height_m) || pi4_baro_initial_height_m<=0.05))
+      throw std::runtime_error("PI4 BARO: initial camera height must be > 0.05 m");
     if(pi4_runtime_safe){
       g_pi4_block_flow_tx=true;
       std::cerr<<"PI4 SAFE RUNTIME: OPTICAL_FLOW TX blocked; no rangefinder; FC RX enabled.\\n";
     }
     FlowFc fc; fc.start(fcdev);
+    double pi4_baro_reference_hpa=0.0;
     if(!remote_log_path.empty()){
       if(fc.startRemoteLog(remote_log_path)){
         std::cerr<<"REMOTE DATAFLASH: запись запущена -> "<<remote_log_path<<"\n";
@@ -2908,7 +2936,18 @@ int main(int argc,char** argv){
         }
 
         double lm=0; int strength=0; int64_t lns=0;
-        const bool hl=luna.latest(&lm,&strength,&lns);
+        bool hl=luna.latest(&lm,&strength,&lns);
+        if(pi4_baro){
+          double pressure=0.0; int64_t pressure_ns=0;
+          hl=false;
+          if(fc.latestBaro(&pressure,&pressure_ns) && now-pressure_ns<500000000LL){
+            if(pi4_baro_reference_hpa==0.0)pi4_baro_reference_hpa=pressure;
+            const double delta_h=44330.0*(1.0-std::pow(pressure/pi4_baro_reference_hpa,0.190294957));
+            lm=pi4_baro_initial_height_m+delta_h;
+            lns=pressure_ns;
+            hl=std::isfinite(lm) && lm>0.05;
+          }
+        }
         const double lage=hl?(now-lns)*1e-6:1e9;
         bool range_sent=false;
         const double range_to_fc=(bench_height_override>0.0)?bench_height_override:lm;
@@ -2918,7 +2957,7 @@ int main(int argc,char** argv){
         // the camera often sees BOTH depth planes, so there is no single metric
         // scale for optical flow. Do not feed those mixed-plane frames to EKF.
         // Resume automatically after 0.4 s with the newest frame anchor.
-        if(bench_height_override<=0.0 && hl && lage<100.0 && lm>0.05){
+        if(!pi4_baro && bench_height_override<=0.0 && hl && lage<100.0 && lm>0.05){
           if(terrain_prev_range_valid){
             const double d=std::abs(lm-terrain_prev_range_m);
             const double ratio=std::max(lm,terrain_prev_range_m)/
@@ -2932,7 +2971,7 @@ int main(int argc,char** argv){
         }
         const bool terrain_step_guard = now < terrain_guard_until_ns;
 
-        if(hl&&lage<200&&(last_range_send_ns==0||now-last_range_send_ns>=50000000LL)){
+        if(!pi4_baro && hl&&lage<200&&(last_range_send_ns==0||now-last_range_send_ns>=50000000LL)){
           range_sent=range_pub.sendDistanceSensor(fc.fd,(uint32_t)(now/1000000LL),range_to_fc);
           last_range_send_ns=now;
           if(range_sent)++range_sent_total;
@@ -2944,7 +2983,7 @@ int main(int argc,char** argv){
           current_camera_height_m=lm;
           // Convert rangefinder optical origin to camera optical origin using
           // the already audited current-mount Z offsets.
-          if(std::isfinite(diag_camera_z_m) && std::isfinite(diag_range_z_m)){
+          if(!pi4_baro && std::isfinite(diag_camera_z_m) && std::isfinite(diag_range_z_m)){
             current_camera_height_m=lm-(diag_camera_z_m-diag_range_z_m);
           }
           if(!(current_camera_height_m>0.05 && std::isfinite(current_camera_height_m)))
