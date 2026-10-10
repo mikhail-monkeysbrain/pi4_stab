@@ -41,10 +41,10 @@ def main():
     print("BUILD adapter + WORKED5", flush=True)
     subprocess.run(build, cwd=root, check=True)
     camera_cmd = [str(binary), str(args.seconds), str(out / "worked5_steps.csv")]
-    fc_cmd = [sys.executable, str(root / "tools/pi4_fc_readonly_capture.py"),
+    fc_cmd = [sys.executable, str(root / "tools/pi4_fc_imu_interval_capture.py"),
               "--port", args.port, "--baud", str(args.baud),
               "--seconds", str(args.seconds), "--out", str(out / "fc.csv")]
-    print("START diagnostic; FC is strictly RX-only; no flow output", flush=True)
+    print("START diagnostic; FC TX: temporary IMU interval requests only; no flow output", flush=True)
     with (out / "camera.log").open("w") as camera_log, (out / "fc.log").open("w") as fc_log:
         fc = subprocess.Popen(fc_cmd, cwd=root, stdout=fc_log, stderr=subprocess.STDOUT)
         camera = subprocess.Popen(camera_cmd, cwd=root, stdout=camera_log,
@@ -84,9 +84,9 @@ def main():
           *(f"{k.lower()}={counts.get(k, 0)}" for k in
             ("HEARTBEAT", "ATTITUDE", "RAW_IMU", "SCALED_IMU")),
           "clock_sync=UNVERIFIED", "height=SYNTHETIC",
-          "calibration=PROVISIONAL", "no_fc_tx=1")
+          "calibration=PROVISIONAL", "fc_tx=INTERVAL_REQUEST_ONLY")
     for file, prefixes in (("camera.log", ("PI4_ADAPTER_", "PI4_ADAPTER_WORKED5_FAIL")),
-                           ("fc.log", ("FC_READONLY", "Traceback", "PermissionError"))):
+                           ("fc.log", ("FC_IMU_REQUEST", "TARGET", "REQUEST", "ACK", "Traceback", "PermissionError"))):
         for line in (out / file).read_text(errors="replace").splitlines():
             if line.startswith(prefixes):
                 print(line)
