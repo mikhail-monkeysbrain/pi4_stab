@@ -2968,7 +2968,13 @@ int main(int argc,char** argv){
         }
         const bool terrain_step_guard = now < terrain_guard_until_ns;
 
-        if(!pi4_baro && hl&&lage<200&&(last_range_send_ns==0||now-last_range_send_ns>=50000000LL)){
+        // Ground-bench experiment: pressure-derived height is NOT a physical range measurement.
+        // Explicit opt-in only; do not use this estimate for flight or terrain following.
+        const bool pi4_baro_range_tx = pi4_baro &&
+          (std::getenv("MONKEYS_PI4_BARO_RANGE_TX") != nullptr) &&
+          (std::string(std::getenv("MONKEYS_PI4_BARO_RANGE_TX")) == "1");
+        if((!pi4_baro || pi4_baro_range_tx) && hl && lage<200 &&
+           (last_range_send_ns==0 || now-last_range_send_ns>=50000000LL)){
           range_sent=range_pub.sendDistanceSensor(fc.fd,(uint32_t)(now/1000000LL),range_to_fc);
           last_range_send_ns=now;
           if(range_sent)++range_sent_total;
