@@ -2942,7 +2942,8 @@ int main(int argc,char** argv){
           if(fc.latestBaro(&pressure,&pressure_ns) && now-pressure_ns<500000000LL){
             if(pi4_baro_reference_hpa==0.0)pi4_baro_reference_hpa=pressure;
             const double delta_h=44330.0*(1.0-std::pow(pressure/pi4_baro_reference_hpa,0.190294957));
-            lm=pi4_baro_initial_height_m+delta_h;
+            // Pi4 bench-only fixed optical height; retain pressure sampling for diagnostics.
+            lm=0.20;
             lns=pressure_ns;
             hl=std::isfinite(lm) && lm>0.05;
           }
