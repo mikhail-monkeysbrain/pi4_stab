@@ -4093,6 +4093,43 @@ int main(int argc,char** argv){
             }
 
 
+          // PI4_VISUAL_Z_LK_PAIRS_V1: optional raw correspondences for offline
+          // geometry research. Never feeds WORKED5 or the flight controller.
+          if(std::getenv("MONKEYS_PI4_VISUAL_Z_LK_PAIRS") &&
+             std::string(std::getenv("MONKEYS_PI4_VISUAL_Z_LK_PAIRS"))=="1"){
+            static std::ofstream vz_pairs_csv;
+            if(!vz_pairs_csv.is_open()){
+              const auto out=std::filesystem::path(csvpath).parent_path()/
+                             "visual_z_lk_pairs.csv";
+              vz_pairs_csv.open(out,std::ios::out|std::ios::trunc);
+              if(vz_pairs_csv.is_open())
+                vz_pairs_csv<<"frame,t0_ns,t1_ns,point_id,x0_px,y0_px,x1_px,y1_px,"
+                               "fx,fy,cx,cy,att0_valid,att1_valid,"
+                               "roll0,pitch0,yaw0,roll1,pitch1,yaw1\n";
+            }
+            if(vz_pairs_csv.is_open() && !mi.K.empty()){
+              const size_t np=std::min(mi.px0.size(),mi.px1.size());
+              const double fx=mi.K.at<double>(0,0),fy=mi.K.at<double>(1,1);
+              const double cx=mi.K.at<double>(0,2),cy=mi.K.at<double>(1,2);
+              for(size_t pi=0;pi<np;++pi){
+                const auto& u=mi.px0[pi];
+                const auto& v=mi.px1[pi];
+                if(!std::isfinite(u.x)||!std::isfinite(u.y)||
+                   !std::isfinite(v.x)||!std::isfinite(v.y)) continue;
+                vz_pairs_csv<<frame<<','<<prev_ts<<','<<ts<<','<<pi<<','
+                  <<u.x<<','<<u.y<<','<<v.x<<','<<v.y<<','
+                  <<fx<<','<<fy<<','<<cx<<','<<cy<<','
+                  <<(a0.valid?1:0)<<','<<(a1.valid?1:0)<<','
+                  <<(a0.valid?a0.attitude.roll:0.0)<<','
+                  <<(a0.valid?a0.attitude.pitch:0.0)<<','
+                  <<(a0.valid?a0.attitude.yaw:0.0)<<','
+                  <<(a1.valid?a1.attitude.roll:0.0)<<','
+                  <<(a1.valid?a1.attitude.pitch:0.0)<<','
+                  <<(a1.valid?a1.attitude.yaw:0.0)<<'\n';
+              }
+            }
+          }
+
           // HIGHRES_PHASE_SWEEP_V1: run the exact same ray/lever geometry at
           // several fixed phase offsets. This is logging-only A/B/C... data.
           if(a0.valid){
