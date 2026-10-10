@@ -5,6 +5,7 @@ cd "$ROOT"
 
 CAMERA="${MONKEYS_CAMERA:-/dev/v4l/by-id/usb-Arducam_Technology_Co.__Ltd._Arducam_OV9281_USB_Camera_UC762-video-index0}"
 LUNA="${MONKEYS_LUNA:-/dev/ttyAMA2}"
+NO_LUNA="${MONKEYS_NO_LUNA:-0}"
 FC="${MONKEYS_FC:-tcp://127.0.0.1:5760}"
 CAMERA_YAML="${MONKEYS_CAMERA_YAML:-$ROOT/config/ov9281_current_mount.yaml}"
 RUNTIME_JSON="${MONKEYS_RUNTIME_JSON:-$ROOT/config/runtime.json}"
@@ -96,7 +97,9 @@ if [[ "${MONKEYS_FAST_RESTART:-0}" != "1" ]]; then
 fi
 
 [[ -e "$CAMERA" ]] || { echo "ОШИБКА: камера не найдена: $CAMERA" >&2; exit 2; }
-[[ -e "$LUNA" ]] || { echo "ОШИБКА: TF-Luna не найден: $LUNA" >&2; exit 2; }
+if [[ "$NO_LUNA" != "1" ]]; then
+  [[ -e "$LUNA" ]] || { echo "ОШИБКА: TF-Luna не найден: $LUNA" >&2; exit 2; }
+fi
 if [[ "$FC" != tcp://* ]]; then
   [[ -e "$FC" ]] || { echo "ОШИБКА: FC не найден: $FC" >&2; exit 2; }
 fi
@@ -218,6 +221,10 @@ ARGS=(
   --diag-camera-z-m "$CAMERA_Z_M"
   --diag-range-z-m "$RANGE_Z_M"
 )
+if [[ "$NO_LUNA" == "1" ]]; then
+  ARGS+=(--no-luna)
+  echo "NO-LUNA: аппаратный дальномер отсутствует. Без AGL метрическая навигация не подтверждена."
+fi
 if [[ "$LOCAL_GUI" == "1" || "$LOCAL_GUI" == "true" || "$LOCAL_GUI" == "yes" ]]; then
   ARGS+=(--rotation-gui)
 fi
