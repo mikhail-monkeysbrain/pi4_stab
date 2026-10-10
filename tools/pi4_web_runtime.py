@@ -37,7 +37,7 @@ def main():
     state={"camera":"STARTING","fc":"CONNECTING","flow_received":0,"flow_invalid":0,
            "flow_last_age_s":None,"fc_messages":0,"attitude":None,"local_position":None,
            "vo_tx":"BLOCKED","reason":"No verified metric AGL; provisional OV5647 calibration",
-           "runtime":"RUNNING"}
+           "runtime":"RUNNING","armed":False,"ekf_valid":False}
     lock=threading.Lock()
     stop=threading.Event()
     class Handler(BaseHTTPRequestHandler):
@@ -47,6 +47,9 @@ def main():
                     payload=dict(state)
                     if payload.pop("_last_flow",None) is not None:
                         payload["flow_last_age_s"]=round(time.monotonic()-state["_last_flow"],3)
+                last_position=payload.pop("_last_position",None)
+                payload["local_position_age_s"]=round(time.monotonic()-last_position,3) if last_position else None
+                payload["ekf_valid"]=bool(last_position and time.monotonic()-last_position<1.0)
                 data=json.dumps(payload).encode()
                 self.send_response(200);self.send_header("Content-Type","application/json; charset=utf-8")
             elif self.path=="/":
@@ -91,6 +94,10 @@ def main():
                     try:
                         fc=mavutil.mavlink_connection(args.port,baud=args.baud,autoreconnect=True)
                         with lock:state["fc"]="CONNECTED"
+                        for message_id,interval_us in ((32,100000),(30,100000),(0,1000000)):
+                            fc.mav.command_long_send(fc.target_system or 1,fc.target_component or 1,
+                                mavutil.mavlink.MAV_CMD_SET_MESSAGE_INTERVAL,0,
+                                message_id,interval_us,0,0,0,0,0)
                     except Exception as exc:
                         with lock:state["fc"]=f"ERROR: {exc}"
                         time.sleep(1)
@@ -113,6 +120,9 @@ def main():
                                 state["fc_messages"]+=1
                                 if msg.get_type()=="LOCAL_POSITION_NED":
                                     state["local_position"]={"x":msg.x,"y":msg.y,"z":msg.z,"vx":msg.vx,"vy":msg.vy,"vz":msg.vz}
+                                    state["_last_position"]=time.monotonic()
+                                if msg.get_type()=="HEARTBEAT":
+                                    state["armed"]=bool(msg.base_mode & mavutil.mavlink.MAV_MODE_FLAG_SAFETY_ARMED)
                                 if msg.get_type()=="ATTITUDE":
                                     state["attitude"]={"roll":round(msg.roll,3),"pitch":round(msg.pitch,3),"yaw":round(msg.yaw,3)}
                     except Exception as exc:
