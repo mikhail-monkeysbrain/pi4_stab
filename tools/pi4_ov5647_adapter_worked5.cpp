@@ -43,6 +43,8 @@ int main(int argc,char **argv) {
         std::condition_variable sample_cv;
         std::deque<Sample> samples;
         bool producer_done=false;
+        std::mutex overlay_mu;
+        std::vector<cv::Point2f> overlay_points;
         uint64_t captured=0, dropped=0;
         // Optional third argument: diagnostic per-step CSV, no FC publishing.
         std::ofstream steps_csv;
@@ -90,6 +92,10 @@ int main(int argc,char **argv) {
                             std::vector<cv::Point2f> a,b;
                             for (size_t i=0;i<ok.size();++i) if (ok[i]) {
                                 a.push_back(pts[i]); b.push_back(next[i]);
+                            }
+                            {
+                                std::lock_guard<std::mutex> lk(overlay_mu);
+                                overlay_points=b;
                             }
                             if (a.size()>=20) {
                                 cv::Mat mask;
@@ -151,7 +157,15 @@ int main(int argc,char **argv) {
             if(preview_fd>=0 && std::chrono::steady_clock::now()>=next_preview) {
                 next_preview=std::chrono::steady_clock::now()+std::chrono::milliseconds(200);
                 std::vector<uchar> jpg;
-                if(cv::imencode(".jpg",frame.gray,jpg,{cv::IMWRITE_JPEG_QUALITY,55}) && jpg.size()+4<60000) {
+                cv::Mat annotated;
+                cv::cvtColor(frame.gray,annotated,cv::COLOR_GRAY2BGR);
+                cv::rectangle(annotated,cv::Point(128,154),cv::Point(512,432),cv::Scalar(0,220,255),2);
+                std::vector<cv::Point2f> points;
+                { std::lock_guard<std::mutex> lk(overlay_mu); points=overlay_points; }
+                for(const auto& point:points) cv::circle(annotated,point,2,cv::Scalar(0,255,0),-1);
+                cv::putText(annotated,"OV5647 WORKED5 tracks: "+std::to_string(points.size()),
+                            cv::Point(8,25),cv::FONT_HERSHEY_SIMPLEX,0.55,cv::Scalar(0,255,255),1);
+                if(cv::imencode(".jpg",annotated,jpg,{cv::IMWRITE_JPEG_QUALITY,55}) && jpg.size()+4<60000) {
                     std::vector<uchar> payload={77,74,80,71};
                     payload.insert(payload.end(),jpg.begin(),jpg.end());
                     sendto(preview_fd,payload.data(),payload.size(),MSG_DONTWAIT,
