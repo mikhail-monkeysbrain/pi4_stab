@@ -3992,6 +3992,34 @@ int main(int argc,char** argv){
               }
             }
 
+            // PI4_VISUAL_Z_SHADOW_V2: minimal diagnostic output, opt-in.
+            // Uses the already computed gyro-derotated affine field; no FC TX.
+            if(pi4_baro && std::getenv("MONKEYS_PI4_VISUAL_Z_SHADOW") &&
+               std::string(std::getenv("MONKEYS_PI4_VISUAL_Z_SHADOW"))=="1"){
+              static std::ofstream vz_csv;
+              if(!vz_csv.is_open()){
+                const auto vz_path=std::filesystem::path(csvpath).parent_path()/
+                                   "visual_z_rotation_shadow.csv";
+                vz_csv.open(vz_path,std::ios::out|std::ios::trunc);
+                if(vz_csv.is_open())
+                  vz_csv<<"frame,dt_s,raw_valid,raw_scale_rate,highres_valid,"
+                           "pixel_field_valid,pixel_field_points,fx,fy,"
+                           "a00,a01,a10,a11,affine_rms_px,const_rms_px\\n";
+              }
+              if(vz_csv.is_open()){
+                const double vz_fx=mi.K.at<double>(0,0);
+                const double vz_fy=mi.K.at<double>(1,1);
+                vz_csv<<frame<<','<<dt<<','<<(s.valid?1:0)<<','<<s.scale_rate<<','
+                      <<(metric_highres_gyro_delta.valid?1:0)<<','
+                      <<(pixel_field_valid?1:0)<<','<<pixel_field_points<<','
+                      <<vz_fx<<','<<vz_fy<<','
+                      <<pixel_field_a00<<','<<pixel_field_a01<<','
+                      <<pixel_field_a10<<','<<pixel_field_a11<<','
+                      <<pixel_field_affine_rms_px<<','
+                      <<pixel_field_const_rms_px<<'\\n';
+              }
+            }
+
             // Same correspondences, two controls:
             // 1) direct delta_R instead of delta_R^T (convention/sign check);
             // 2) ATTITUDE endpoint rotation, independent of gyro integration.
