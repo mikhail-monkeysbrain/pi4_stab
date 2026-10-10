@@ -99,7 +99,11 @@ if [[ "${MONKEYS_FAST_RESTART:-0}" != "1" ]]; then
   else
     export MONKEYS_FLOW_OPTIONS_EXPECTED=0
   fi
-  bash "$ROOT/scripts/audit_fc_params.sh"
+  if [[ "${MONKEYS_BUILD_ONLY:-0}" == "1" ]]; then
+    echo "BUILD ONLY: проверка параметров FC отложена; MAVLink и камера не запускаются."
+  else
+    bash "$ROOT/scripts/audit_fc_params.sh"
+  fi
 fi
 
 if [[ "$PI4_OV5647" != "1" ]]; then
@@ -198,6 +202,11 @@ else
   fi
   cp "$BIN" "$CACHED_BIN"
   chmod +x "$CACHED_BIN"
+fi
+
+if [[ "${MONKEYS_BUILD_ONLY:-0}" == "1" ]]; then
+  echo "BUILD ONLY PASS: исходный runtime собран: $BIN"
+  exit 0
 fi
 
 cat <<EOF
