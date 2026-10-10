@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
-"""OV5647 adapter + frozen WORKED5 + FC IMU RX-only bench diagnostic.
-Visible progress for every run longer than 9 seconds. No MAVLink TX.
+"""OV5647 adapter + frozen WORKED5 + FC IMU bench diagnostic.
+Visible progress for long runs. FC TX limited to telemetry interval requests.
 """
 import argparse
 import csv
@@ -10,15 +10,21 @@ import sys
 import time
 
 
-def progress(elapsed, total, camera, fc):
+def progress(elapsed, total, camera, fc, previous_length=0):
     ratio = min(1.0, max(0.0, elapsed / total))
-    width = 30
-    filled = round(width * ratio)
-    bar = "#" * filled + "-" * (width - filled)
-    status = (f"RUN [{bar}] {ratio * 100:5.1f}% "
-              f"{elapsed:5.1f}/{total}s camera={'RUN' if camera is None else camera} "
-              f"fc={'RUN' if fc is None else fc}")
-    print("\\r" + status.ljust(92), end="", flush=True)
+    cam = "RUN" if camera is None else str(camera)
+    fc_status = "RUN" if fc is None else str(fc)
+    suffix = f" {ratio * 100:3.0f}% {elapsed:.0f}/{total}s C:{cam} F:{fc_status}"
+    import shutil
+    columns = shutil.get_terminal_size(fallback=(60, 24)).columns
+    width = max(5, min(24, columns - len(suffix) - 5))
+    bar = "#" * round(width * ratio) + "-" * (width - round(width * ratio))
+    line = f"[{bar}]{suffix}"
+    # Never pad to a fixed 92 columns; avoid terminal line wrapping.
+    line = line[:max(1, columns - 1)]
+    sys.stdout.write("\r" + line + " " * max(0, previous_length - len(line)))
+    sys.stdout.flush()
+    return len(line)
 
 
 def main():
@@ -51,18 +57,25 @@ def main():
         camera = subprocess.Popen(camera_cmd, cwd=root, stdout=camera_log,
                                   stderr=subprocess.STDOUT)
         start = time.monotonic()
+        previous_length = 0
+        last_report = -1
         try:
             while True:
                 elapsed = time.monotonic() - start
                 cam_rc = camera.poll()
                 fc_rc = fc.poll()
-                progress(elapsed, args.seconds, cam_rc, fc_rc)
+                if sys.stdout.isatty():
+                    previous_length = progress(elapsed, args.seconds, cam_rc, fc_rc, previous_length)
+                elif int(elapsed // 5) != last_report:
+                    last_report = int(elapsed // 5)
+                    print(f"PROGRESS {min(100, elapsed / args.seconds * 100):.0f}% elapsed={elapsed:.1f}s", flush=True)
                 if cam_rc is not None and fc_rc is not None:
                     break
                 if elapsed > args.seconds + 15:
                     raise TimeoutError("diagnostic exceeded expected duration")
                 time.sleep(0.25)
-            print()
+            if sys.stdout.isatty():
+                print()
         finally:
             for proc in (camera, fc):
                 if proc.poll() is None:
@@ -72,7 +85,8 @@ def main():
                     except subprocess.TimeoutExpired:
                         proc.kill()
                         proc.wait()
-            print(flush=True)
+            if sys.stdout.isatty():
+                print(flush=True)
     counts = {}
     fc_csv = out / "fc.csv"
     if fc_csv.exists():
