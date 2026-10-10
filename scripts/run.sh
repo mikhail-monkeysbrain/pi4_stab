@@ -6,6 +6,7 @@ cd "$ROOT"
 CAMERA="${MONKEYS_CAMERA:-/dev/v4l/by-id/usb-Arducam_Technology_Co.__Ltd._Arducam_OV9281_USB_Camera_UC762-video-index0}"
 LUNA="${MONKEYS_LUNA:-/dev/ttyAMA2}"
 NO_LUNA="${MONKEYS_NO_LUNA:-0}"
+PI4_OV5647="${MONKEYS_PI4_OV5647:-0}"
 FC="${MONKEYS_FC:-tcp://127.0.0.1:5760}"
 CAMERA_YAML="${MONKEYS_CAMERA_YAML:-$ROOT/config/ov9281_current_mount.yaml}"
 RUNTIME_JSON="${MONKEYS_RUNTIME_JSON:-$ROOT/config/runtime.json}"
@@ -96,7 +97,9 @@ if [[ "${MONKEYS_FAST_RESTART:-0}" != "1" ]]; then
   bash "$ROOT/scripts/audit_fc_params.sh"
 fi
 
-[[ -e "$CAMERA" ]] || { echo "ОШИБКА: камера не найдена: $CAMERA" >&2; exit 2; }
+if [[ "$PI4_OV5647" != "1" ]]; then
+  [[ -e "$CAMERA" ]] || { echo "ОШИБКА: камера не найдена: $CAMERA" >&2; exit 2; }
+fi
 if [[ "$NO_LUNA" != "1" ]]; then
   [[ -e "$LUNA" ]] || { echo "ОШИБКА: TF-Luna не найден: $LUNA" >&2; exit 2; }
 fi
@@ -181,9 +184,9 @@ if [[ "${MONKEYS_FAST_RESTART:-0}" == "1" ]]; then
   echo "FAST RESTART: использую уже проверенный runtime $CACHED_BIN"
 else
   if ! g++ -std=c++17 -O2 -DNDEBUG -pthread -Wno-address-of-packed-member \
-    $(pkg-config --cflags opencv4) -I"$MAVLINK_ROOT" -I"$ROOT/src" \
+    $(pkg-config --cflags opencv4 libcamera) -I"$MAVLINK_ROOT" -I"$ROOT/src" \
     "$ROOT/src/optical_flow_mavlink.cpp" -o "$BIN" \
-    $(pkg-config --libs opencv4) -lpthread >"$BUILD_LOG" 2>&1; then
+    $(pkg-config --libs opencv4 libcamera) -lpthread >"$BUILD_LOG" 2>&1; then
     echo "ОШИБКА СБОРКИ. Последние 80 строк:"
     tail -80 "$BUILD_LOG"
     exit 1
@@ -221,6 +224,9 @@ ARGS=(
   --diag-camera-z-m "$CAMERA_Z_M"
   --diag-range-z-m "$RANGE_Z_M"
 )
+if [[ "$PI4_OV5647" == "1" ]]; then
+  ARGS+=(--pi4-ov5647)
+fi
 if [[ "$NO_LUNA" == "1" ]]; then
   ARGS+=(--no-luna)
   echo "NO-LUNA: аппаратный дальномер отсутствует. Без AGL метрическая навигация не подтверждена."
