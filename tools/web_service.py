@@ -2531,10 +2531,6 @@ class H(BaseHTTPRequestHandler):
     def do_POST(self):
         p=urlparse(self.path).path
         try:
-            if os.environ.get("MONKEYS_PI4_RUNTIME_SAFE")=="1" and (
-                p.startswith("/api/fc/") or p in ("/api/geometry",)
-            ):
-                return self.send_json({"error":"Pi4: управление FC и геометрией заблокировано до подтверждения AGL"},403)
             if p=="/api/config":
                 if running(): raise RuntimeError("Остановите flight runtime перед изменением стартовых параметров")
                 self.send_json({"ok":True,"runtime":save_config(self.body_json())})
