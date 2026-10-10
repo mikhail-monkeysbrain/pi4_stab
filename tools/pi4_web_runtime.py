@@ -67,6 +67,12 @@ def main():
                         "tools/pi4_ov5647_adapter_worked5.cpp","-o",str(binary),*flags],
                        cwd=root,check=True)
         env=dict(os.environ,PI4_FLOW_SOCKET=path,PI4_PREVIEW_UDP_PORT="8766")
+        config_path=root/"config/runtime.json"
+        if config_path.exists():
+            settings=json.loads(config_path.read_text(encoding="utf-8"))
+            roi=settings.get("feature_roi",[0.2,0.32,0.8,0.9])
+            env["MONKEYS_FEATURE_ROI"]=" ".join(str(x) for x in roi)
+            env["MONKEYS_MAX_FEATURES"]=str(settings.get("max_features",500))
         # Adapter currently supports max 120 seconds. Restart on successful completion.
         camera=None
         fc=None
