@@ -1395,7 +1395,9 @@ struct FlowFc {
   }
 };
 
+static bool g_pi4_block_flow_tx=false;
 bool sendOpticalFlow(int fd,uint64_t time_usec,float rate_x,float rate_y,uint8_t quality){
+  if(g_pi4_block_flow_tx) return false;
   if(fd<0 || !std::isfinite(rate_x) || !std::isfinite(rate_y))return false;
   mavlink_message_t msg{};
   mavlink_msg_optical_flow_pack(
@@ -2012,6 +2014,7 @@ int main(int argc,char** argv){
   const std::string csvpath=argv[4], yaml=argv[5];
   const double focal_scale=std::stod(argv[6]);
   bool no_luna=false;
+  bool pi4_runtime_safe=false;
   bool pi4_ov5647=false;
   bool pi4_camera_only=false;
   bool guided=false;
@@ -2047,6 +2050,7 @@ int main(int argc,char** argv){
       guided=true; continuous_guided=true; continuous_legs=std::stoi(argv[++i]);
     }
     else if(a=="--no-luna") no_luna=true;
+    else if(a=="--pi4-runtime-safe") { pi4_runtime_safe=true; no_luna=true; pi4_ov5647=true; }
     else if(a=="--pi4-ov5647") pi4_ov5647=true;
     else if(a=="--pi4-camera-only") { pi4_camera_only=true; pi4_ov5647=true; }
     else if(a=="--require-armed") require_armed=true;
@@ -2182,6 +2186,10 @@ int main(int argc,char** argv){
                <<" no_fc_connection=1 no_mavlink_tx=1\n";
       return frames>0 && st.missing_timestamp==0 &&
              st.nonmonotonic_timestamp==0 ? 0 : 1;
+    }
+    if(pi4_runtime_safe){
+      g_pi4_block_flow_tx=true;
+      std::cerr<<"PI4 SAFE RUNTIME: OPTICAL_FLOW TX blocked; no rangefinder; FC RX enabled.\\n";
     }
     FlowFc fc; fc.start(fcdev);
     if(!remote_log_path.empty()){
