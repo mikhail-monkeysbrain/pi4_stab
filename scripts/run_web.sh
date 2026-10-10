@@ -5,7 +5,8 @@ cd "$ROOT"
 PORT="${MONKEYS_WEB_PORT:-8080}"
 PY="${MONKEYS_PYTHON:-$HOME/mavlink-test-venv/bin/python}"
 if [[ ! -x "$PY" ]]; then PY=python3; fi
-exec "$PY" -u "$ROOT/tools/pi4_original_web.py" \
-  --serial "${MONKEYS_FC_UART:-/dev/serial0}" \
-  --baud "${MONKEYS_FC_BAUD:-460800}" \
-  --port "$PORT"
+export MONKEYS_PI4_RUNTIME_SAFE=1
+export MONKEYS_PI4_OV5647=1
+export MONKEYS_NO_LUNA=1
+export MONKEYS_LOCAL_GUI=0
+exec "$PY" -u "$ROOT/tools/web_service.py" --host 0.0.0.0 --port "$PORT"
