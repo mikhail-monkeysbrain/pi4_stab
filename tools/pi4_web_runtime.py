@@ -28,7 +28,7 @@ def main():
     from pymavlink import mavutil
     root=Path(__file__).resolve().parent.parent
     state={"camera":"STARTING","fc":"CONNECTING","flow_received":0,"flow_invalid":0,
-           "flow_last_age_s":None,"fc_messages":0,"attitude":None,
+           "flow_last_age_s":None,"fc_messages":0,"attitude":None,"local_position":None,
            "vo_tx":"BLOCKED","reason":"No verified metric AGL; provisional OV5647 calibration",
            "runtime":"RUNNING"}
     lock=threading.Lock()
@@ -59,7 +59,7 @@ def main():
         subprocess.run(["g++","-std=c++17","-O2","-pthread","-Isrc",
                         "tools/pi4_ov5647_adapter_worked5.cpp","-o",str(binary),*flags],
                        cwd=root,check=True)
-        env=dict(os.environ,PI4_FLOW_SOCKET=path)
+        env=dict(os.environ,PI4_FLOW_SOCKET=path,PI4_PREVIEW_UDP_PORT="8766")
         # Adapter currently supports max 120 seconds. Restart on successful completion.
         camera=None
         fc=None
@@ -94,6 +94,8 @@ def main():
                         if msg:
                             with lock:
                                 state["fc_messages"]+=1
+                                if msg.get_type()=="LOCAL_POSITION_NED":
+                                    state["local_position"]={"x":msg.x,"y":msg.y,"z":msg.z,"vx":msg.vx,"vy":msg.vy,"vz":msg.vz}
                                 if msg.get_type()=="ATTITUDE":
                                     state["attitude"]={"roll":round(msg.roll,3),"pitch":round(msg.pitch,3),"yaw":round(msg.yaw,3)}
                     except Exception as exc:
