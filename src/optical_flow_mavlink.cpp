@@ -3904,7 +3904,7 @@ int main(int argc,char** argv){
           // PIXEL_ROTATION_SHADOW_V1. OpenCV undistorted normalized rays are
           // rotated C0 -> body0 -> body1 -> C1. For a stationary world point
           // and a pure camera rotation, c1 = C_R_B * dR^T * B_R_C * c0.
-          if(metric_highres_gyro_delta.valid && !mi.K.empty() &&
+          if((metric_highres_gyro_delta.valid || (std::getenv("MONKEYS_PI4_VISUAL_Z_SHADOW") && std::string(std::getenv("MONKEYS_PI4_VISUAL_Z_SHADOW"))=="1" && metric_gyro_delta.valid)) && !mi.K.empty() &&
              mi.px0.size()==mi.px1.size() && mi.px0.size()>=20){
             std::vector<cv::Point2f> uq0,uq1;
             cv::undistortPoints(mi.px0,uq0,mi.K,mi.D);
@@ -3912,7 +3912,7 @@ int main(int argc,char** argv){
             const cv::Matx33d B_R_C=mi.body_R_camera_frd;
             const cv::Matx33d C_R_B=B_R_C.t();
             const cv::Matx33d C1_R_C0=
-              C_R_B*metric_highres_gyro_delta.delta_R.t()*B_R_C;
+              C_R_B*(metric_highres_gyro_delta.valid ? metric_highres_gyro_delta.delta_R.t() : metric_gyro_delta.delta_R.t())*B_R_C;
             std::vector<double> er,edu,edv;
             er.reserve(uq0.size()); edu.reserve(uq0.size()); edv.reserve(uq0.size());
             const double fx=mi.K.at<double>(0,0), fy=mi.K.at<double>(1,1);
@@ -4082,6 +4082,7 @@ int main(int argc,char** argv){
                 const double vz_fy=mi.K.at<double>(1,1);
                 vz_csv<<frame<<','<<dt<<','<<(s.valid?1:0)<<','<<s.scale_rate<<','
                       <<(metric_highres_gyro_delta.valid?1:0)<<','
+                      <<(metric_gyro_delta.valid?1:0)<<','
                       <<(pixel_field_valid?1:0)<<','<<pixel_field_points<<','
                       <<vz_fx<<','<<vz_fy<<','
                       <<pixel_field_a00<<','<<pixel_field_a01<<','
