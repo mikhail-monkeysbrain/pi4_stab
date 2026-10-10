@@ -16,6 +16,10 @@
 #include <vector>
 #include <cstdint>
 #include <stdexcept>
+#include <unistd.h>
+#include <sys/socket.h>
+#include <sys/un.h>
+#include <cstring>
 
 int main(int argc,char **argv) {
     try {
@@ -39,6 +43,12 @@ int main(int argc,char **argv) {
         uint64_t captured=0, dropped=0;
         // Optional third argument: diagnostic per-step CSV, no FC publishing.
         std::ofstream steps_csv;
+        int stream_fd=-1;
+        const char *stream_path=std::getenv("PI4_FLOW_SOCKET");
+        if(stream_path && *stream_path) {
+            stream_fd=socket(AF_UNIX,SOCK_DGRAM|SOCK_NONBLOCK,0);
+            if(stream_fd<0) throw std::runtime_error("flow socket create failed");
+        }
         if (argc > 2) {
             steps_csv.open(argv[2]);
             if (!steps_csv) throw std::runtime_error("cannot open WORKED5 steps CSV");
@@ -95,6 +105,15 @@ int main(int argc,char **argv) {
                                     if (result.valid && std::isfinite(result.du_norm) &&
                                         std::isfinite(result.dv_norm)) {
                                         ++worked5_ok;
+                                        if(stream_fd>=0) {
+                                            sockaddr_un addr{};
+                                            addr.sun_family=AF_UNIX;
+                                            if(std::strlen(stream_path)<sizeof(addr.sun_path)) {
+                                                std::strcpy(addr.sun_path,stream_path);
+                                                std::string packet=std::to_string(ts)+","+std::to_string(dt)+","+std::to_string(result.points)+","+std::to_string(result.du_norm)+","+std::to_string(result.dv_norm)+","+std::to_string(result.scale)+","+std::to_string(result.yaw)+",0";
+                                                sendto(stream_fd,packet.data(),packet.size(),MSG_DONTWAIT,(sockaddr*)&addr,sizeof(addr));
+                                            }
+                                        }
                                         if (steps_csv) {
                                             steps_csv << ts << "," << dt << "," << result.points
                                                       << "," << result.du_norm << "," << result.dv_norm
@@ -133,6 +152,7 @@ int main(int argc,char **argv) {
         sample_cv.notify_one();
         worker.join();
         if(steps_csv) steps_csv.flush();
+        if(stream_fd>=0) close(stream_fd);
         std::cout<<"PI4_ADAPTER_WORKED5 pairs="<<pairs
                  <<" ransac_ok="<<ransac_ok<<" worked5_valid="<<worked5_ok
                  <<" invalid_dt="<<invalid_dt<<" captured="<<captured
