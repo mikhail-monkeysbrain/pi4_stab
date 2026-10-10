@@ -69,7 +69,7 @@ def main():
                      "roll_deg":(data.get("attitude") or {}).get("roll",0)*180/3.141592653589793,
                      "pitch_deg":(data.get("attitude") or {}).get("pitch",0)*180/3.141592653589793,
                      "yaw_deg":(data.get("attitude") or {}).get("yaw",0)*180/3.141592653589793,
-                     "range_m":None,"ekf_valid":bool(data.get("local_position")),"armed":False,
+                     "range_m":None,"ekf_valid":bool(data.get("ekf_valid")),"armed":bool(data.get("armed")),
                      "x":(data.get("local_position") or {}).get("x",0),
                      "y":(data.get("local_position") or {}).get("y",0),
                      "z":(data.get("local_position") or {}).get("z",0),
