@@ -26,6 +26,9 @@ def main():
     proc=None
     state={"flow_received":0,"fc_messages":0,"fc":"CONNECTING","camera":"STARTING"}
     stop=threading.Event()
+    active=threading.Event()
+    active.set()
+    lifecycle=threading.Lock()
     last_logged_flow=0
     last_logged_fc=0
     web.log_event("WARN","Pi4: VO TX отключён, AGL отсутствует")
@@ -33,10 +36,20 @@ def main():
     def runtime():
         nonlocal proc,last_logged_flow,last_logged_fc
         env=dict(os.environ)
-        proc=subprocess.Popen([sys.executable,"-u",str(root/"tools/pi4_web_runtime.py"),
+        while not stop.is_set():
+            if not active.wait(0.2):
+                continue
+            with lifecycle:
+                if proc is not None and proc.poll() is None:
+                    break
+                proc=subprocess.Popen([sys.executable,"-u",str(root/"tools/pi4_web_runtime.py"),
              "--port",args.serial,"--baud",str(args.baud),"--http-port","18080"],
-             cwd=root,env=env)
+             cwd=root,env=env, start_new_session=True)
+            web.log_event("INFO","Pi4 WORKED5 runtime запущен")
+            break
         while not stop.wait(0.4):
+            if not active.is_set():
+                continue
             try:
                 import urllib.request
                 with urllib.request.urlopen("http://127.0.0.1:18080/api/status",timeout=0.3) as resp:
@@ -74,10 +87,35 @@ def main():
             return self.send_json(payload)
         return original_get(self)
     def safe_post(self):
-        self.send_json({"error":"Pi4: команды FC и старого runtime отключены; VO TX заблокирован"},403)
+        from urllib.parse import urlparse
+        path=urlparse(self.path).path
+        if path=="/api/start":
+            with lifecycle:
+                if proc is not None and proc.poll() is None:
+                    return self.send_json({"ok":True,"already_running":True,"pid":proc.pid})
+                active.set()
+                threading.Thread(target=runtime,daemon=True).start()
+            web.log_event("INFO","Pi4: запуск runtime запрошен из вебморды")
+            return self.send_json({"ok":True,"starting":True})
+        if path=="/api/stop":
+            active.clear()
+            with lifecycle:
+                if proc is not None and proc.poll() is None:
+                    proc.terminate()
+                    try:proc.wait(timeout=5)
+                    except subprocess.TimeoutExpired:proc.kill()
+            web.log_event("INFO","Pi4: runtime остановлен из вебморды")
+            return self.send_json({"ok":True})
+        if path=="/api/zero":
+            web.set_zero()
+            return self.send_json({"ok":True})
+        if path=="/api/system/visualization":
+            return original_post(self)
+        return self.send_json({"error":"Pi4: эта команда недоступна; FC control и VO TX отключены"},403)
+    original_post=web.H.do_POST
     web.H.do_GET=safe_get
     web.H.do_POST=safe_post
-    web.running=lambda:proc is not None and proc.poll() is None
+    web.running=lambda:active.is_set() and proc is not None and proc.poll() is None
     web.start_live_udp_listener()
     threading.Thread(target=runtime,daemon=True).start()
     server=ThreadingHTTPServer(("0.0.0.0",args.port),web.H)
@@ -88,6 +126,7 @@ def main():
         pass
     finally:
         stop.set()
+        active.clear()
         server.shutdown()
         web.stop_live_udp_listener()
         if proc is not None and proc.poll() is None:
