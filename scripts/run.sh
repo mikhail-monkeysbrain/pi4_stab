@@ -99,7 +99,7 @@ if [[ "${MONKEYS_FAST_RESTART:-0}" != "1" ]]; then
   else
     export MONKEYS_FLOW_OPTIONS_EXPECTED=0
   fi
-  if [[ "${MONKEYS_BUILD_ONLY:-0}" == "1" ]]; then
+  if [[ "${MONKEYS_BUILD_ONLY:-0}" == "1" || "${MONKEYS_PI4_CAMERA_ONLY:-0}" == "1" ]]; then
     echo "BUILD ONLY: проверка параметров FC отложена; MAVLink и камера не запускаются."
   else
     bash "$ROOT/scripts/audit_fc_params.sh"
@@ -238,6 +238,9 @@ ARGS=(
   --diag-camera-z-m "$CAMERA_Z_M"
   --diag-range-z-m "$RANGE_Z_M"
 )
+if [[ "${MONKEYS_PI4_CAMERA_ONLY:-0}" == "1" ]]; then
+  ARGS+=(--pi4-camera-only)
+fi
 if [[ "$PI4_OV5647" == "1" ]]; then
   ARGS+=(--pi4-ov5647)
 fi
