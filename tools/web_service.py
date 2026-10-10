@@ -1141,7 +1141,11 @@ def start_runtime(fast_start=False):
         # RAW_OF_CONTRACT_V1 is opt-in via the parent environment and requires
         # FC FLOW_OPTIONS=0; never enable both contracts at once.
         raw_contract=str(os.environ.get("MONKEYS_RAW_UNIFIED_PUBLISH","0")).lower() in ("1","true","yes")
-        if raw_contract:
+        pi4_safe=os.environ.get("MONKEYS_PI4_RUNTIME_SAFE")=="1"
+        if pi4_safe:
+            env["MONKEYS_STABILISED_UNIFIED_PUBLISH"]="0"
+            env["MONKEYS_RAW_UNIFIED_PUBLISH"]="0"
+        elif raw_contract:
             env.pop("MONKEYS_STABILISED_UNIFIED_PUBLISH",None)
             env["MONKEYS_RAW_UNIFIED_PUBLISH"]="1"
         else:
