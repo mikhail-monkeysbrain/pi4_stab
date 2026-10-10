@@ -248,6 +248,11 @@ fi
 if [[ "$PI4_OV5647" == "1" ]]; then
   ARGS+=(--pi4-ov5647)
 fi
+if [[ "${MONKEYS_PI4_BARO:-0}" == "1" ]]; then
+  [[ "$PI4_OV5647" == "1" && "$NO_LUNA" == "1" ]] || { echo "PI4 BARO: требуется OV5647 и NO_LUNA" >&2; exit 2; }
+  ARGS+=(--pi4-baro-height "${MONKEYS_PI4_BARO_H0:-0.18}")
+  echo "PI4 BARO: экспериментальная высота камеры H0=${MONKEYS_PI4_BARO_H0:-0.18} м; DISTANCE_SENSOR не отправляется."
+fi
 if [[ "$NO_LUNA" == "1" ]]; then
   ARGS+=(--no-luna)
   echo "NO-LUNA: аппаратный дальномер отсутствует. Без AGL метрическая навигация не подтверждена."
