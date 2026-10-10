@@ -69,7 +69,10 @@ def main():
                      "roll_deg":(data.get("attitude") or {}).get("roll",0)*180/3.141592653589793,
                      "pitch_deg":(data.get("attitude") or {}).get("pitch",0)*180/3.141592653589793,
                      "yaw_deg":(data.get("attitude") or {}).get("yaw",0)*180/3.141592653589793,
-                     "range_m":None,"ekf_valid":False,"armed":False,
+                     "range_m":None,"ekf_valid":bool(data.get("local_position")),"armed":False,
+                     "x":(data.get("local_position") or {}).get("x",0),
+                     "y":(data.get("local_position") or {}).get("y",0),
+                     "z":(data.get("local_position") or {}).get("z",0),
                      "flow_sent":False,"range_sent":False}
                 udp=socket.socket(socket.AF_INET,socket.SOCK_DGRAM)
                 udp.sendto(json.dumps(raw).encode(),("127.0.0.1",web.LIVE_UDP_PORT))
