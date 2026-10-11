@@ -1,0 +1,17 @@
+{
+  "frame": "FRD",
+  "units": "m",
+  "reference": "FC_IMU",
+  "camera": {
+    "name": "OV9281",
+    "x": 0.0,
+    "y": 0.0,
+    "z": 0.0
+  },
+  "rangefinder": {
+    "name": "TF-Luna",
+    "x": -0.03,
+    "y": 0.0,
+    "z": 0.062
+  }
+}

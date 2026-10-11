@@ -1131,16 +1131,10 @@ def start_runtime(fast_start=False):
         env=os.environ.copy()
         env["MONKEYS_LOCAL_GUI"]="0"
         env["MONKEYS_FC"]=FC_ENDPOINT
-        # Default Web contour remains Variant B stabilised. Experimental
-        # RAW_OF_CONTRACT_V1 is opt-in via the parent environment and requires
-        # FC FLOW_OPTIONS=0; never enable both contracts at once.
-        raw_contract=str(os.environ.get("MONKEYS_RAW_UNIFIED_PUBLISH","0")).lower() in ("1","true","yes")
-        if raw_contract:
-            env.pop("MONKEYS_STABILISED_UNIFIED_PUBLISH",None)
-            env["MONKEYS_RAW_UNIFIED_PUBLISH"]="1"
-        else:
-            env["MONKEYS_STABILISED_UNIFIED_PUBLISH"]="1"
-            env.pop("MONKEYS_RAW_UNIFIED_PUBLISH",None)
+        # Pi4: original WORKED5 publication mode (FLOW_OPTIONS=0).
+        # Keep both experimental unified publish modes disabled.
+        env.pop("MONKEYS_STABILISED_UNIFIED_PUBLISH",None)
+        env.pop("MONKEYS_RAW_UNIFIED_PUBLISH",None)
         env["MONKEYS_WEB_TELEMETRY_UDP_PORT"]=str(LIVE_UDP_PORT)
         env["MONKEYS_WEB_PREVIEW_PATH"]=str(PREVIEW_PATH)
         try:
