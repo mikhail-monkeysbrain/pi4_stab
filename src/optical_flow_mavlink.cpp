@@ -2246,7 +2246,7 @@ int main(int argc,char** argv){
     int64_t last_not_ready_print_ns=0;
     constexpr double kReadyStableSec=3.0;
     constexpr double kReadyTimeoutSec=20.0;
-    constexpr double kReadyMinRangeM=0.10;
+    constexpr double kReadyMinRangeM=0.05;
     constexpr double kReadyMaxRangeM=10.0;
     constexpr double kReadyMaxSpeedMps=0.03;
     // Readiness checks liveness of successful production OF publication,
