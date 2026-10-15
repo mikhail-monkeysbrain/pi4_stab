@@ -2854,11 +2854,11 @@ int main(int argc,char** argv){
         // the camera often sees BOTH depth planes, so there is no single metric
         // scale for optical flow. Do not feed those mixed-plane frames to EKF.
         // Resume automatically after 0.4 s with the newest frame anchor.
-        if(bench_height_override<=0.0 && hl && lage<100.0 && lm>0.05){
+        if(bench_height_override<=0.0 && hl && lage<100.0 && lm>=0.03){
           if(terrain_prev_range_valid){
             const double d=std::abs(lm-terrain_prev_range_m);
             const double ratio=std::max(lm,terrain_prev_range_m)/
-                               std::max(0.05,std::min(lm,terrain_prev_range_m));
+                               std::max(0.03,std::min(lm,terrain_prev_range_m));
             if(d>=kTerrainStepAbsM && ratio>=kTerrainStepRatio){
               terrain_guard_until_ns=now+kTerrainGuardNs;
             }
@@ -2875,7 +2875,7 @@ int main(int argc,char** argv){
         }
 
         double current_camera_height_m=0.0;
-        bool current_camera_height_valid=hl && lage<100.0 && lm>0.05;
+        bool current_camera_height_valid=hl && lage<100.0 && lm>=0.03;
         if(current_camera_height_valid){
           current_camera_height_m=lm;
           // Convert rangefinder optical origin to camera optical origin using
@@ -2883,7 +2883,7 @@ int main(int argc,char** argv){
           if(std::isfinite(diag_camera_z_m) && std::isfinite(diag_range_z_m)){
             current_camera_height_m=lm-(diag_camera_z_m-diag_range_z_m);
           }
-          if(!(current_camera_height_m>0.05 && std::isfinite(current_camera_height_m)))
+          if(!(current_camera_height_m>=0.03 && std::isfinite(current_camera_height_m)))
             current_camera_height_valid=false;
         }
 
@@ -4232,7 +4232,7 @@ int main(int argc,char** argv){
         // Camera focal-point velocity caused only by body rotation is omega x r.
         // r is the already audited camera position relative to the FC IMU in FRD.
         if(s.valid && fg_ok && current_camera_height_valid &&
-           current_camera_height_m>0.05 &&
+           current_camera_height_m>=0.03 &&
            std::isfinite(diag_camera_x_m) && std::isfinite(diag_camera_y_m) &&
            std::isfinite(diag_camera_z_m)){
           const cv::Vec3d omega(fg.x,fg.y,fg.z);
