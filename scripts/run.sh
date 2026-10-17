@@ -102,7 +102,9 @@ fi
 if [[ "$CAMERA" != "csi:0" ]]; then
   [[ -e "$CAMERA" ]] || { echo "ОШИБКА: камера не найдена: $CAMERA" >&2; exit 2; }
 fi
-[[ -e "$LUNA" ]] || { echo "ОШИБКА: TF-Luna не найден: $LUNA" >&2; exit 2; }
+if [[ "$CAMERA" != "csi:0" ]]; then
+  [[ -e "$LUNA" ]] || { echo "ОШИБКА: TF-Luna не найден: $LUNA" >&2; exit 2; }
+fi
 if [[ "$FC" != tcp://* ]]; then
   [[ -e "$FC" ]] || { echo "ОШИБКА: FC не найден: $FC" >&2; exit 2; }
 fi
