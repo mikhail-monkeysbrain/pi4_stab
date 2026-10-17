@@ -389,6 +389,10 @@ struct FlowFc {
   std::mutex mu;
   FlowFcLocal local{};
   FlowEkfStatus ekf{};
+#ifdef JTZERO_CSI_OV5647
+  double fc_reported_alt_m=0.0;
+  int64_t fc_reported_alt_ns=0;
+#endif
   FlowFcGyro gyro{};
   FlowFcImu imu{};
   imu_dr::State imu_dr_state{};
@@ -881,6 +885,9 @@ struct FlowFc {
       // requests after the rest of the subscriptions have been installed.
       requestRate(fd,sys,comp,MAVLINK_MSG_ID_LOCAL_POSITION_NED,20);
       requestRate(fd,sys,comp,MAVLINK_MSG_ID_EKF_STATUS_REPORT,5);
+#ifdef JTZERO_CSI_OV5647
+      requestRate(fd,sys,comp,MAVLINK_MSG_ID_VFR_HUD,20);
+#endif
       requestRate(fd,sys,comp,MAVLINK_MSG_ID_HIGHRES_IMU,100);
       requestRate(fd,sys,comp,MAVLINK_MSG_ID_ATTITUDE,100);
       // AHRS omegaI is ArduPilot's gyro drift correction.  Capture it only
@@ -1217,6 +1224,15 @@ struct FlowFc {
               flowfc_highres_max_handler_ms=
                 std::max(flowfc_highres_max_handler_ms,flowfc_highres_handler_ms);
               if(flowfc_highres_handler_ms>5.0) ++flowfc_highres_handler_gt5;
+#ifdef JTZERO_CSI_OV5647
+            } else if(m.msgid==MAVLINK_MSG_ID_VFR_HUD){
+              mavlink_vfr_hud_t q{}; mavlink_msg_vfr_hud_decode(&m,&q);
+              if(std::isfinite(q.alt)){
+                std::lock_guard<std::mutex> l(mu);
+                fc_reported_alt_m=q.alt;
+                fc_reported_alt_ns=monoNs();
+              }
+#endif
             } else if(m.msgid==MAVLINK_MSG_ID_LOCAL_POSITION_NED){
               mavlink_local_position_ned_t q{}; mavlink_msg_local_position_ned_decode(&m,&q);
               std::lock_guard<std::mutex> l(mu);
@@ -2163,7 +2179,12 @@ int main(int argc,char** argv){
 #else
     Camera cam; cam.openDev(camdev);
 #endif
+#ifdef JTZERO_CSI_OV5647
+    // FC altitude mode: no TF-Luna device is opened.
+    LunaReader luna;
+#else
     LunaReader luna; luna.start(lunadev);
+#endif
     FlowFc fc; fc.start(fcdev);
     if(!remote_log_path.empty()){
       if(fc.startRemoteLog(remote_log_path)){
@@ -2886,7 +2907,31 @@ int main(int argc,char** argv){
         }
 
         double lm=0; int strength=0; int64_t lns=0;
+#ifdef JTZERO_CSI_OV5647
+        bool hl=false;
+        {
+          std::lock_guard<std::mutex> l(fc.mu);
+          lns=fc.fc_reported_alt_ns;
+          lm=fc.fc_reported_alt_m;
+          hl=lns>0 && std::isfinite(lm);
+        }
+        // Existing range-history consumers need a timestamped height sample.
+        if(hl && lns!=0){
+          std::lock_guard<std::mutex> l(luna.state.mu);
+          luna.state.distance_m=lm;
+          luna.state.strength=0;
+          luna.state.recv_ns=lns;
+          luna.state.valid=true;
+          if(luna.state.history.empty() || luna.state.history.back().recv_ns!=lns){
+            luna.state.history.push_back(LunaSample{lm,0,lns});
+            while(luna.state.history.size()>2 &&
+                  lns-luna.state.history.front().recv_ns>3000000000LL)
+              luna.state.history.pop_front();
+          }
+        }
+#else
         const bool hl=luna.latest(&lm,&strength,&lns);
+#endif
         const double lage=hl?(now-lns)*1e-6:1e9;
         bool range_sent=false;
         const double range_to_fc=(bench_height_override>0.0)?bench_height_override:lm;
