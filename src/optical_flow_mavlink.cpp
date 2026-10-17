@@ -2054,6 +2054,28 @@ int main(int argc,char** argv){
   double diag_camera_z_m=std::numeric_limits<double>::quiet_NaN();
   double diag_range_z_m=std::numeric_limits<double>::quiet_NaN();
   double bench_height_override=0.0;
+#ifdef JTZERO_CSI_OV5647
+  // Explicitly simulated camera-to-ground distance, for propeller-free bench tests only.
+  double csi_bench_height_m=0.0;
+  if(const char* raw=std::getenv("MONKEYS_CSI_BENCH_HEIGHT_M")){
+    try {
+      csi_bench_height_m=std::stod(raw);
+    } catch(...) {
+      std::cerr<<"ОШИБКА: MONKEYS_CSI_BENCH_HEIGHT_M должно быть числом (метры)\n";
+      return 2;
+    }
+    if(!(csi_bench_height_m>=0.03 && csi_bench_height_m<=0.05)){
+      std::cerr<<"ОШИБКА: CSI bench height разрешена только 0.03..0.05 м\n";
+      return 2;
+    }
+    if(const char* pub=std::getenv("MONKEYS_CSI_ALLOW_PUBLISH"); !pub || std::string(pub)!="1"){
+      std::cerr<<"ОШИБКА: CSI bench height требует MONKEYS_CSI_ALLOW_PUBLISH=1\n";
+      return 2;
+    }
+    std::cerr<<"CSI BENCH ONLY: фиксированная высота камеры "<<csi_bench_height_m
+             <<" м, без пропеллеров; НЕ ДЛЯ ПОЛЁТА\n";
+  }
+#endif
   double bench_true_camera_height=0.0;
   double pre_static_sec=5.0;
   double post_static_sec=5.0;
@@ -2909,12 +2931,14 @@ int main(int argc,char** argv){
         double lm=0; int strength=0; int64_t lns=0;
 #ifdef JTZERO_CSI_OV5647
         bool hl=false;
-        {
-          std::lock_guard<std::mutex> l(fc.mu);
-          lns=fc.fc_reported_alt_ns;
-          lm=fc.fc_reported_alt_m;
-          hl=lns>0 && std::isfinite(lm);
+        if(csi_bench_height_m>0.0){
+          // Synthetic AGL for a stationary bench, never derived from VFR_HUD.alt.
+          lm=csi_bench_height_m;
+          lns=now;
+          hl=true;
         }
+        // Without an actual AGL sensor, FC altitude is NOT a range measurement.
+        // Leave the range-dependent pipeline invalid outside explicit bench mode.
         // Existing range-history consumers need a timestamped height sample.
         if(hl && lns!=0){
           std::lock_guard<std::mutex> l(luna.state.mu);
@@ -2934,7 +2958,11 @@ int main(int argc,char** argv){
 #endif
         const double lage=hl?(now-lns)*1e-6:1e9;
         bool range_sent=false;
+#ifdef JTZERO_CSI_OV5647
+        const double range_to_fc=csi_bench_height_m>0.0?csi_bench_height_m:0.0;
+#else
         const double range_to_fc=(bench_height_override>0.0)?bench_height_override:lm;
+#endif
 
         // A downward rangefinder can jump from table to floor (or back) while the
         // vehicle itself has not moved vertically. During that short transition
@@ -2957,7 +2985,7 @@ int main(int argc,char** argv){
 
         if(hl&&lage<200&&(last_range_send_ns==0||now-last_range_send_ns>=50000000LL)){
           #ifdef JTZERO_CSI_OV5647
-          if(const char* v=std::getenv("MONKEYS_CSI_ALLOW_PUBLISH"); v && std::string(v)=="1")
+          if(const char* v=std::getenv("MONKEYS_CSI_ALLOW_PUBLISH"); v && std::string(v)=="1" && csi_bench_height_m>0.0)
             range_sent=range_pub.sendDistanceSensor(fc.fd,(uint32_t)(now/1000000LL),range_to_fc);
           else range_sent=false;
 #else
@@ -2973,9 +3001,15 @@ int main(int argc,char** argv){
           current_camera_height_m=lm;
           // Convert rangefinder optical origin to camera optical origin using
           // the already audited current-mount Z offsets.
+#ifdef JTZERO_CSI_OV5647
+          if(csi_bench_height_m<=0.0 && std::isfinite(diag_camera_z_m) && std::isfinite(diag_range_z_m)){
+            current_camera_height_m=lm-(diag_camera_z_m-diag_range_z_m);
+          }
+#else
           if(std::isfinite(diag_camera_z_m) && std::isfinite(diag_range_z_m)){
             current_camera_height_m=lm-(diag_camera_z_m-diag_range_z_m);
           }
+#endif
           if(!(current_camera_height_m>=0.03 && std::isfinite(current_camera_height_m)))
             current_camera_height_valid=false;
         }
