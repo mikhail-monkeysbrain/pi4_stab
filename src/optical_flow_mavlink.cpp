@@ -15,6 +15,9 @@
 #include "ardupilotmega/mavlink.h"
 
 #include "runtime.hpp"
+#ifdef JTZERO_CSI_OV5647
+#include "csi_gray_camera.hpp"
+#endif
 #include "mavlink_io.hpp"
 #include "metric_odometry_shadow.hpp"
 #include "metric_shadow_sync.hpp"
@@ -2145,7 +2148,15 @@ int main(int argc,char** argv){
     calib.fx*=focal_scale; calib.fy*=focal_scale;
     calib.K=(cv::Mat_<double>(3,3)<<calib.fx,0,calib.cx,0,calib.fy,calib.cy,0,0,1);
 
+#ifdef JTZERO_CSI_OV5647
+    // CSI build is opt-in; the existing USB production binary is unchanged.
+    // First integration is build-only. Do not run against FC before calibration.
+    if(camdev!="csi:0") throw std::runtime_error("CSI build requires camera argument csi:0");
+    CsiGrayCamera cam;
+    cam.open(60);
+#else
     Camera cam; cam.openDev(camdev);
+#endif
     LunaReader luna; luna.start(lunadev);
     FlowFc fc; fc.start(fcdev);
     if(!remote_log_path.empty()){
@@ -2561,12 +2572,19 @@ int main(int argc,char** argv){
     bool startup_clock_reset_done=false;
 
     while(g_running){
-      pollfd p{cam.fd,POLLIN,0};
       const int64_t camera_poll_enter_ns=monoNs();
+#ifdef JTZERO_CSI_OV5647
+      CsiGrayCamera::Frame csi_frame;
+      const bool csi_ready=cam.take(csi_frame,20);
+      const int64_t camera_poll_exit_ns=monoNs();
+      if(!csi_ready) continue;
+#else
+      pollfd p{cam.fd,POLLIN,0};
       const int pr=poll(&p,1,20);
       const int64_t camera_poll_exit_ns=monoNs();
       if(pr<0){if(errno==EINTR)continue;fail("camera poll");}
       if(pr<=0)continue;
+#endif
 
       // КРИТИЧЕСКИ: обработка KLT медленнее capture-rate камеры. Если
       // обрабатывать каждый queued MJPEG кадр, возникает постоянный backlog
@@ -2617,6 +2635,20 @@ int main(int argc,char** argv){
       int64_t camera_dq_last_exit_ns=0;
       double camera_dq_ioctl_max_ms=0.0;
       uint64_t camera_dq_count=0;
+#ifdef JTZERO_CSI_OV5647
+      // Preserve existing JPEG-based forensic/dataset formats in this first
+      // integration. Encode grayscale solely for compatibility; optimize after
+      // checking full-runtime FPS. WORKED5 receives the same decoded gray type.
+      ts=csi_frame.sensor_ns;
+      selected_v4l2_ts_ns=ts; // CSV compatibility field; CSI SensorTimestamp
+      selected_dq_mono_ns=csi_frame.received_ns;
+      selected_v4l2_flags=0; // V4L2 flags do not apply to libcamera
+      camera_queue_dropped=csi_frame.dropped;
+      camera_dq_count=1;
+      ++fps_dqbuf; ++w5w_dqbuf;
+      if(!cv::imencode(".jpg",csi_frame.gray,latest_jpeg))
+        continue;
+#else
       while(g_running){
         v4l2_buffer b{}; b.type=V4L2_BUF_TYPE_VIDEO_CAPTURE; b.memory=V4L2_MEMORY_MMAP;
         const int64_t dq_enter_ns=monoNs();
@@ -2649,6 +2681,7 @@ int main(int argc,char** argv){
         selected_v4l2_flags=b.flags;
         if(xioctl(cam.fd,VIDIOC_QBUF,&b)<0)fail("VIDIOC_QBUF");
       }
+#endif
       const int64_t camera_dq_batch_exit_ns=monoNs();
       if(latest_jpeg.empty()) continue;
       camera_queue_dropped_total += camera_queue_dropped;
@@ -2716,6 +2749,7 @@ int main(int argc,char** argv){
       // sparse histogram inside the OF ROI: no ROI clone, sort or OpenCV work.
       // Update only at ~2 Hz (100 fps / 50 frames) to avoid control chatter.
       static const int64_t ae_capture_start_ns=monoNs();
+#ifndef JTZERO_CSI_OV5647
       if((frame%50)==0 && monoNs()-ae_capture_start_ns>=1000000000LL){
         const int ax0=std::clamp((int)std::lround(g_feature_roi.x0*gray.cols),0,gray.cols-1);
         const int ay0=std::clamp((int)std::lround(g_feature_roi.y0*gray.rows),0,gray.rows-1);
@@ -2769,6 +2803,8 @@ int main(int argc,char** argv){
           }
         }
       }
+
+#endif // JTZERO_CSI_OV5647: OV9281 V4L2 exposure control disabled
 
       // RPZ2 diagnostic snapshots: the console experiment creates a marker,
       // and the production camera loop saves the next decoded frame.
