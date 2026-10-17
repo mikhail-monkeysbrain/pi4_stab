@@ -63,7 +63,11 @@ fi
 export MAVLINK_ROOT
 RUN_ROOT="${MONKEYS_RUN_ROOT:-$HOME/monkeysStab_runs}"
 CACHE_DIR="${MONKEYS_RUNTIME_CACHE_DIR:-$ROOT/build/runtime_cache}"
-CACHED_BIN="$CACHE_DIR/monkeysstab_optical_flow"
+if [[ "$CAMERA" == "csi:0" ]]; then
+  CACHED_BIN="$CACHE_DIR/monkeysstab_optical_flow_csi"
+else
+  CACHED_BIN="$CACHE_DIR/monkeysstab_optical_flow"
+fi
 mkdir -p "$RUN_ROOT" "$CACHE_DIR"
 
 # Bound total storage used by automatically-created production runs before
@@ -95,7 +99,9 @@ if [[ "${MONKEYS_FAST_RESTART:-0}" != "1" ]]; then
   bash "$ROOT/scripts/audit_fc_params.sh"
 fi
 
-[[ -e "$CAMERA" ]] || { echo "ОШИБКА: камера не найдена: $CAMERA" >&2; exit 2; }
+if [[ "$CAMERA" != "csi:0" ]]; then
+  [[ -e "$CAMERA" ]] || { echo "ОШИБКА: камера не найдена: $CAMERA" >&2; exit 2; }
+fi
 [[ -e "$LUNA" ]] || { echo "ОШИБКА: TF-Luna не найден: $LUNA" >&2; exit 2; }
 if [[ "$FC" != tcp://* ]]; then
   [[ -e "$FC" ]] || { echo "ОШИБКА: FC не найден: $FC" >&2; exit 2; }
@@ -193,7 +199,7 @@ cat <<EOF
 ======================================================================
 monkeysStab — OPTICAL FLOW
 ======================================================================
-OV9281 -> OPTICAL_FLOW -> ArduPilot EKF3
+${CAMERA} -> OPTICAL_FLOW -> ArduPilot EKF3
 TF-Luna -> DISTANCE_SENSOR
 
 camera: $CAMERA
