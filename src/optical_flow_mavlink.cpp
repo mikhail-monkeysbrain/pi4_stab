@@ -15,6 +15,7 @@
 #include "ardupilotmega/mavlink.h"
 
 #include "runtime.hpp"
+#include <cstdlib>
 #ifdef JTZERO_CSI_OV5647
 #include "csi_gray_camera.hpp"
 #endif
@@ -1398,6 +1399,9 @@ struct FlowFc {
 };
 
 bool sendOpticalFlow(int fd,uint64_t time_usec,float rate_x,float rate_y,uint8_t quality){
+#ifdef JTZERO_CSI_OV5647
+  if(const char* v=std::getenv("MONKEYS_CSI_ALLOW_PUBLISH"); !v || std::string(v)!="1") return false;
+#endif
   if(fd<0 || !std::isfinite(rate_x) || !std::isfinite(rate_y))return false;
   mavlink_message_t msg{};
   mavlink_msg_optical_flow_pack(
@@ -2154,6 +2158,8 @@ int main(int argc,char** argv){
     if(camdev!="csi:0") throw std::runtime_error("CSI build requires camera argument csi:0");
     CsiGrayCamera cam;
     cam.open(60);
+    if(const char* v=std::getenv("MONKEYS_CSI_ALLOW_PUBLISH"); !v || std::string(v)!="1")
+      std::cerr<<"CSI READ-ONLY: OF, range and OSD publication disabled. FC telemetry reception enabled.\n";
 #else
     Camera cam; cam.openDev(camdev);
 #endif
@@ -2905,7 +2911,13 @@ int main(int argc,char** argv){
         const bool terrain_step_guard = now < terrain_guard_until_ns;
 
         if(hl&&lage<200&&(last_range_send_ns==0||now-last_range_send_ns>=50000000LL)){
+          #ifdef JTZERO_CSI_OV5647
+          if(const char* v=std::getenv("MONKEYS_CSI_ALLOW_PUBLISH"); v && std::string(v)=="1")
+            range_sent=range_pub.sendDistanceSensor(fc.fd,(uint32_t)(now/1000000LL),range_to_fc);
+          else range_sent=false;
+#else
           range_sent=range_pub.sendDistanceSensor(fc.fd,(uint32_t)(now/1000000LL),range_to_fc);
+#endif
           last_range_send_ns=now;
           if(range_sent)++range_sent_total;
         }
@@ -4484,7 +4496,11 @@ int main(int argc,char** argv){
           if(osd_healthy &&
              (last_osd_rssi_send_ns==0 ||
               osd_now_ns-last_osd_rssi_send_ns>=kOsdRssiPeriodNs)){
+            #ifdef JTZERO_CSI_OV5647
+            if(const char* v=std::getenv("MONKEYS_CSI_ALLOW_PUBLISH"); v && std::string(v)=="1" && sendHealthRadioStatus(fc.fd)){
+#else
             if(sendHealthRadioStatus(fc.fd)){
+#endif
               last_osd_rssi_send_ns=osd_now_ns;
             }
           }
