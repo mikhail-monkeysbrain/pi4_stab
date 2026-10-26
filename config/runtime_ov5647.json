@@ -8,5 +8,6 @@
   ],
   "max_features": 500,
   "local_gui": true,
-  "visualization_mode": "simple"
+  "visualization_mode": "simple",
+  "camera_source": "csi"
 }

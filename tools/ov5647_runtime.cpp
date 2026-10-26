@@ -1,6 +1,8 @@
 #define JTZERO_OPTFLOW_LIBRARY
 #include "../src/optical_flow_mavlink.cpp"
 #include "../src/camera_source_csi.hpp"
+#include "../src/camera_source_usb.hpp"
+#include <memory>
 
 #include <chrono>
 #include <fstream>
@@ -31,6 +33,24 @@ int main() {
         int max_features = 500;
         config["max_features"] >> max_features;
 
+        std::string camera_source = "csi";
+        if (!config["camera_source"].empty())
+            config["camera_source"] >> camera_source;
+
+        std::string usb_device;
+        if (!config["usb_device"].empty())
+            config["usb_device"] >> usb_device;
+
+        if (camera_source != "csi" && camera_source != "usb")
+            throw std::runtime_error("Invalid camera_source");
+
+        if (camera_source == "usb" && usb_device.empty())
+            throw std::runtime_error("USB device not specified");
+
+        if (camera_source == "usb")
+            throw std::runtime_error(
+                "USB mode disabled until separate camera calibration is configured");
+
         if (roi.size() != 4 ||
             !std::isfinite(focal_scale) ||
             focal_scale <= 0.0 ||
@@ -60,8 +80,13 @@ int main() {
         g_fb_shadow_max_px = 0.0;
         g_obs_shadow_enabled = false;
 
-        jtzero::CameraSourceCSI camera;
-        camera.start();
+        std::unique_ptr<jtzero::CameraSource> camera;
+        if (camera_source == "csi")
+            camera = std::make_unique<jtzero::CameraSourceCSI>();
+        else
+            camera = std::make_unique<jtzero::CameraSourceUSB>(usb_device);
+
+        camera->start();
 
         std::ofstream csv("/tmp/ov5647_runtime.csv");
         if (!csv)
@@ -89,7 +114,7 @@ int main() {
         while (jtzero_csi::monoNs() < finish) {
             jtzero::CameraFrame frame;
 
-            if (!camera.newest(frame)) {
+            if (!camera->newest(frame)) {
                 std::this_thread::sleep_for(
                     std::chrono::milliseconds(1));
                 continue;
@@ -156,7 +181,7 @@ int main() {
         csv.close();
 
         
-        camera.stop();
+        camera->stop();
 
         std::cout << "===== OV5647 PRODUCTION LK =====\n";
         std::cout << "frames=" << frames << "\n";
