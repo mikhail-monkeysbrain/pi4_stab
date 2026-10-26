@@ -1,0 +1,14 @@
+[Unit]
+Description=JT-Zero Automatic WiFi Selection
+Requires=NetworkManager.service
+After=NetworkManager.service
+Before=jtzero-flight.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/jtzero-network-select.sh
+RemainAfterExit=yes
+TimeoutStartSec=70
+
+[Install]
+WantedBy=multi-user.target

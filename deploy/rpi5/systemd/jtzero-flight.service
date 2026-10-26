@@ -1,0 +1,30 @@
+[Unit]
+Description=JT-Zero MonkeysStab Flight Runtime
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=simple
+User=vio
+Group=vio
+WorkingDirectory=/home/vio/Desktop/monkeysStab_pi4
+
+Environment=PYTHONUNBUFFERED=1
+Environment=MONKEYS_RAW_UNIFIED_PUBLISH=1
+Environment=MONKEYS_FAST_RESTART=1
+Environment=MONKEYS_WEB_PORT=8080
+Environment=HOME=/home/vio
+
+ExecStart=/bin/bash /home/vio/Desktop/monkeysStab_pi4/startFlightRuntime.sh
+
+Restart=on-failure
+RestartSec=5
+TimeoutStopSec=15
+KillMode=control-group
+
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=jtzero-flight
+
+[Install]
+WantedBy=multi-user.target
