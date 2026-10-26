@@ -1,10 +1,31 @@
 {
-  "focal_scale": 0.931,
+  "camera_source": "csi",
+  "camera_profiles": {
+    "usb": {
+      "focal_scale": 0.931,
+      "feature_roi": [
+        0.2,
+        0.32,
+        0.8,
+        0.9
+      ]
+    },
+    "csi": {
+      "focal_scale": 1.0,
+      "feature_roi": [
+        0.0,
+        0.0,
+        1.0,
+        1.0
+      ]
+    }
+  },
+  "focal_scale": 1.0,
   "feature_roi": [
-    0.2,
-    0.32,
-    0.8,
-    0.9
+    0.0,
+    0.0,
+    1.0,
+    1.0
   ],
   "max_features": 500,
   "local_gui": true,

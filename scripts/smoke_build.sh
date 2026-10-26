@@ -23,8 +23,8 @@ fi
 
 OUT="${1:-/tmp/monkeysstab_optical_flow_buildcheck}"
 g++ -std=c++17 -O2 -DNDEBUG -pthread -Wno-address-of-packed-member \
-  $(pkg-config --cflags opencv4) -I"$MAVLINK_ROOT" -I"$ROOT/src" \
+  $(pkg-config --cflags opencv4 libcamera) -I"$MAVLINK_ROOT" -I"$ROOT/src" \
   "$ROOT/src/optical_flow_mavlink.cpp" -o "$OUT" \
-  $(pkg-config --libs opencv4) -lpthread
+  $(pkg-config --libs opencv4 libcamera) -lpthread
 
 echo "BUILD PASS: $OUT"

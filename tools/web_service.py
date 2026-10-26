@@ -31,10 +31,16 @@ WEB_ASSETS=ROOT/"web_assets"
 PREVIEW_PATH=Path(os.environ.get("MONKEYS_WEB_PREVIEW_PATH","/dev/shm/monkeysstab_vo_preview.jpg"))
 DEFAULTS={
     "focal_scale":0.931,
+    "camera_source":"csi",
     "feature_roi":[0.20,0.32,0.80,0.90],
     "max_features":500,
     "local_gui":True,
     "visualization_mode":"simple",
+}
+
+CAMERA_DEFAULTS={
+    "usb":{"focal_scale":0.931,"feature_roi":[0.20,0.32,0.80,0.90]},
+    "csi":{"focal_scale":1.0,"feature_roi":[0.0,0.0,1.0,1.0]},
 }
 
 _lock=threading.RLock()
@@ -133,43 +139,80 @@ def load_json(path, fallback):
         return fallback
 
 def load_config():
-    d=load_json(CONFIG, dict(DEFAULTS))
+    raw=load_json(CONFIG,{})
+    if not isinstance(raw,dict): raw={}
     out=dict(DEFAULTS)
-    out.update({k:v for k,v in d.items() if k in out})
+    out.update({k:v for k,v in raw.items() if k in out})
+    source=str(out.get("camera_source","csi")).lower()
+    if source not in CAMERA_DEFAULTS: source="csi"
+    out["camera_source"]=source
+    saved=raw.get("camera_profiles",{})
+    if not isinstance(saved,dict): saved={}
+    profiles={}
+    for name,default in CAMERA_DEFAULTS.items():
+        profile={"focal_scale":default["focal_scale"],"feature_roi":list(default["feature_roi"])}
+        custom=saved.get(name,{})
+        if isinstance(custom,dict):
+            profile.update({k:v for k,v in custom.items() if k in profile})
+        profiles[name]=profile
+    out["camera_profiles"]=profiles
+    out.update(profiles[source])
     return out
 
+
 def validate_config(d):
-    fs=float(d.get("focal_scale"))
-    if not (0.5 < fs < 2.0):
-        raise ValueError("focal_scale должен быть в диапазоне 0.5..2.0")
-    roi=d.get("feature_roi")
-    if not isinstance(roi,list) or len(roi)!=4:
-        raise ValueError("feature_roi должен содержать 4 числа")
-    roi=[float(x) for x in roi]
-    x0,y0,x1,y1=roi
-    if not (0<=x0<x1<=1 and 0<=y0<y1<=1 and x1-x0>=0.20 and y1-y0>=0.20):
-        raise ValueError("feature_roi: 0..1, ширина/высота не менее 0.20")
-    mf=int(d.get("max_features"))
-    if not (100 <= mf <= 1000):
-        raise ValueError("max_features должен быть 100..1000")
+    source=str(d.get("camera_source","csi")).lower()
+    if source not in CAMERA_DEFAULTS: raise ValueError("camera_source должен быть usb или csi")
+    profiles=d.get("camera_profiles",{})
+    if not isinstance(profiles,dict): raise ValueError("camera_profiles должен быть объектом")
+    valid={}
+    for name in ("usb","csi"):
+        p=profiles.get(name,CAMERA_DEFAULTS[name])
+        if not isinstance(p,dict): raise ValueError("Некорректный профиль "+name)
+        fs=float(p["focal_scale"])
+        if not (0.5<fs<2.0): raise ValueError(name+": focal_scale вне диапазона")
+        roi=p["feature_roi"]
+        if not isinstance(roi,list) or len(roi)!=4: raise ValueError(name+": ROI должен содержать 4 числа")
+        roi=[float(v) for v in roi]
+        x0,y0,x1,y1=roi
+        if not (0<=x0<x1<=1 and 0<=y0<y1<=1 and x1-x0>=0.20 and y1-y0>=0.20):
+            raise ValueError(name+": некорректный ROI")
+        valid[name]={"focal_scale":fs,"feature_roi":roi}
+    mf=int(d.get("max_features",500))
+    if not 100<=mf<=1000: raise ValueError("max_features должен быть 100..1000")
+    mode=str(d.get("visualization_mode","simple"))
     return {
-        "focal_scale":fs,
-        "feature_roi":roi,
-        "max_features":mf,
-        "local_gui":bool(d.get("local_gui",True)),
-        "visualization_mode":str(d.get("visualization_mode","simple")) if str(d.get("visualization_mode","simple")) in ("simple","light") else "simple",
+        "camera_source":source,"camera_profiles":valid,
+        "focal_scale":valid[source]["focal_scale"],
+        "feature_roi":valid[source]["feature_roi"],
+        "max_features":mf,"local_gui":bool(d.get("local_gui",True)),
+        "visualization_mode":mode if mode in ("simple","light") else "simple",
     }
+
 
 def save_config(d):
     merged=load_config()
-    merged.update(d)
-    d=validate_config(merged)
+    merged.update({k:v for k,v in d.items() if k not in ("camera_profiles","focal_scale","feature_roi")})
+    profiles={name:dict(p) for name,p in merged["camera_profiles"].items()}
+    if "camera_profiles" in d:
+        supplied=d["camera_profiles"]
+        if not isinstance(supplied,dict): raise ValueError("camera_profiles должен быть объектом")
+        for name,p in supplied.items():
+            if name not in profiles or not isinstance(p,dict): raise ValueError("Некорректный профиль камеры")
+            profiles[name].update(p)
+    source=str(merged["camera_source"]).lower()
+    if source not in profiles: raise ValueError("Неизвестная камера")
+    for key in ("focal_scale","feature_roi"):
+        if key in d: profiles[source][key]=d[key]
+    merged["camera_profiles"]=profiles
+    result=validate_config(merged)
     tmp=CONFIG.with_suffix(".json.tmp")
     with open(tmp,"w",encoding="utf-8") as f:
-        json.dump(d,f,ensure_ascii=False,indent=2)
+        json.dump(result,f,ensure_ascii=False,indent=2)
         f.write("\n")
     os.replace(tmp,CONFIG)
-    return d
+    return result
+
 
 def running():
     global _proc
@@ -1131,6 +1174,9 @@ def start_runtime(fast_start=False):
         env=os.environ.copy()
         env["MONKEYS_LOCAL_GUI"]="0"
         env["MONKEYS_FC"]=FC_ENDPOINT
+        # Camera selection is persisted in runtime.json and overrides
+        # the systemd default for this child process.
+        env["MONKEYS_CAMERA_SOURCE"]=load_config()["camera_source"]
         # Pi4: original WORKED5 publication mode (FLOW_OPTIONS=0).
         # Keep both experimental unified publish modes disabled.
         env.pop("MONKEYS_STABILISED_UNIFIED_PUBLISH",None)
@@ -1778,6 +1824,12 @@ button{cursor:pointer}
   <div id="settings-runtime" class="tabPane active">
    <div class="card" style="max-width:720px">
     <h3>Параметры Optical Flow runtime</h3>
+    <div class="field"><span>Источник камеры</span>
+     <select id="scamera" onchange="switchCameraProfile()">
+      <option value="csi">OV5647 CSI</option>
+      <option value="usb">OV9281 USB</option>
+     </select>
+    </div>
     <div class="field"><span>Focal scale</span><input id="sfocal" type="number" min=".5" max="2" step=".001"></div>
     <div class="field"><span>ROI x0</span><input id="sr0" type="number" step=".01"></div>
     <div class="field"><span>ROI y0</span><input id="sr1" type="number" step=".01"></div>
@@ -1929,10 +1981,33 @@ function setActiveMode(mode){
  if(mode==='Stabilize'&&$('mStab'))$('mStab').classList.add('blue');
  if(mode==='PosHold'&&$('mPos'))$('mPos').classList.add('blue');
 }
+let cameraProfiles={};
+let editedCameraSource=null;
+function captureCameraProfile(){
+ if(!editedCameraSource)return;
+ cameraProfiles[editedCameraSource]={
+  focal_scale:+$('sfocal').value,
+  feature_roi:[+$('sr0').value,+$('sr1').value,+$('sr2').value,+$('sr3').value]
+ };
+}
+function showCameraProfile(source){
+ const p=cameraProfiles[source];
+ if(!p)return;
+ $('sfocal').value=p.focal_scale;
+ [$('sr0').value,$('sr1').value,$('sr2').value,$('sr3').value]=p.feature_roi;
+}
+function switchCameraProfile(){
+ captureCameraProfile();
+ editedCameraSource=$('scamera').value;
+ showCameraProfile(editedCameraSource);
+}
 async function loadConfig(){
  let j=await api('/api/config'),c=j.runtime;
+  cameraProfiles=JSON.parse(JSON.stringify(c.camera_profiles||{}));
+  editedCameraSource=c.camera_source||'csi';
+  if($('scamera'))$('scamera').value=editedCameraSource;
  $('focal').value=c.focal_scale;[$('r0').value,$('r1').value,$('r2').value,$('r3').value]=c.feature_roi;$('features').value=c.max_features;
- if($('sfocal')){$('sfocal').value=c.focal_scale;[$('sr0').value,$('sr1').value,$('sr2').value,$('sr3').value]=c.feature_roi;$('sfeatures').value=c.max_features;}
+  if($('sfocal')){showCameraProfile(editedCameraSource);$('sfeatures').value=c.max_features;}
  window.visualizationMode=c.visualization_mode||'simple';refreshVisualizationMode();
  let g=j.geometry||{},gv=[];
  if(g.camera){gv.push(['FLOW_POS_X',g.camera.x*1000],['FLOW_POS_Y',g.camera.y*1000],['FLOW_POS_Z',g.camera.z*1000])}
@@ -1949,14 +2024,82 @@ async function saveConfig(){
  }catch(e){$('saveMsg').textContent='Ошибка: '+e.message}
 }
 async function saveRuntimeSettings(){
+ let wasRunning=false, stopped=false, startAttempted=false;
+ const msg=$('runtimeSettingsMsg');
+ const waitState=async(expected,timeoutMs=10000)=>{
+  const deadline=Date.now()+timeoutMs;
+  while(Date.now()<deadline){
+   const st=await api('/api/status');
+   if(!!st.running===expected)return;
+   await new Promise(resolve=>setTimeout(resolve,250));
+  }
+  throw new Error(expected
+   ?'Runtime не подтвердил запуск за 10 секунд'
+   :'Runtime не остановился за 10 секунд');
+ };
  try{
-  let body={focal_scale:+$('sfocal').value,feature_roi:[+$('sr0').value,+$('sr1').value,+$('sr2').value,+$('sr3').value],max_features:+$('sfeatures').value};
-  let j=await api('/api/config',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
-  $('runtimeSettingsMsg').textContent='Сохранено';
-  $('focal').value=j.runtime.focal_scale;[$('r0').value,$('r1').value,$('r2').value,$('r3').value]=j.runtime.feature_roi;$('features').value=j.runtime.max_features;
- }catch(e){$('runtimeSettingsMsg').textContent='Ошибка: '+e.message}
-}
-async function loadFcParams(){
+  const body={
+   camera_source:$('scamera').value,
+   focal_scale:+$('sfocal').value,
+   feature_roi:[
+    +$('sr0').value,+$('sr1').value,
+    +$('sr2').value,+$('sr3').value
+   ],
+    max_features:+$('sfeatures').value
+  };
+  captureCameraProfile();
+  body.camera_profiles=cameraProfiles;
+
+  const before=await api('/api/status');
+  wasRunning=!!before.running;
+  if(wasRunning){
+   const fc=await api('/api/fc');
+   if(fc.armed!==false)throw new Error('Сохранение с перезапуском запрещено: FC не DISARMED');
+  }
+
+  if(wasRunning){
+   msg.textContent='Остановка runtime...';
+   await api('/api/stop',{method:'POST'});
+   stopped=true;
+   await waitState(false);
+  }
+
+  msg.textContent='Сохранение настроек...';
+  const j=await api('/api/config',{
+   method:'POST',
+   headers:{'Content-Type':'application/json'},
+   body:JSON.stringify(body)
+  });
+
+  $('focal').value=j.runtime.focal_scale;
+  [$('r0').value,$('r1').value,$('r2').value,$('r3').value]
+   =j.runtime.feature_roi;
+  $('features').value=j.runtime.max_features;
+
+  if(wasRunning){
+   msg.textContent='Запуск runtime с новыми настройками...';
+   startAttempted=true;
+   await api('/api/start',{method:'POST'});
+   await waitState(true);
+   msg.textContent='Сохранено. Runtime перезапущен.';
+  }else{
+   msg.textContent='Сохранено. Runtime оставлен остановленным.';
+  }
+ }catch(e){
+  let error=e.message;
+  if(wasRunning&&stopped&&!startAttempted){
+   try{
+    msg.textContent='Ошибка сохранения. Восстановление прежнего runtime...';
+    await api('/api/start',{method:'POST'});
+    await waitState(true);
+    error+='; прежний runtime восстановлен';
+   }catch(re){
+    error+='; не удалось восстановить runtime: '+re.message;
+   }
+  }
+  msg.textContent='Ошибка: '+error;
+ }
+}async function loadFcParams(){
  if(!$('fcParamRows'))return;
  $('fcParamMsg').textContent='Чтение...';
  try{
@@ -2516,8 +2659,21 @@ class H(BaseHTTPRequestHandler):
         p=urlparse(self.path).path
         try:
             if p=="/api/config":
-                if running(): raise RuntimeError("Остановите flight runtime перед изменением стартовых параметров")
-                self.send_json({"ok":True,"runtime":save_config(self.body_json())})
+                if running():
+                    raise RuntimeError("Остановите flight runtime перед изменением стартовых параметров")
+                body=self.body_json()
+                old_source=load_config().get("camera_source","csi")
+                new_source=str(body.get("camera_source",old_source)).lower()
+                if new_source not in ("usb","csi"):
+                    raise ValueError("Источник камеры должен быть usb или csi")
+                if new_source != old_source:
+                    status=fc_control("status")
+                    if status.get("armed") is not False:
+                        raise RuntimeError(
+                            "Переключение камеры запрещено: FC должен быть "
+                            "DISARMED, а его состояние — достоверно подтверждено"
+                        )
+                self.send_json({"ok":True,"runtime":save_config(body)})
             elif p=="/api/start": forensic_action("WEB_RUNTIME_START");self.send_json(start_runtime())
             elif p=="/api/restart-fast": forensic_action("WEB_RUNTIME_RESTART");self.send_json(fast_restart_runtime())
             elif p=="/api/stop": forensic_action("WEB_RUNTIME_STOP");self.send_json(stop_runtime())

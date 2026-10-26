@@ -248,9 +248,8 @@ public:
             connected_ = true;
 
             libcamera::ControlList controls(camera_->controls());
-            controls.set(libcamera::controls::AeEnable, false);
-            controls.set(libcamera::controls::ExposureTime, 3000);
-            controls.set(libcamera::controls::AnalogueGain, 4.0f);
+            // OV5647: automatic exposure and analogue gain.
+            controls.set(libcamera::controls::AeEnable, true);
             controls.set(
                 libcamera::controls::FrameDurationLimits,
                 std::array<int64_t, 2>{16666, 16666});

@@ -3,10 +3,15 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT"
 
+CAMERA_SOURCE="${MONKEYS_CAMERA_SOURCE:-usb}"
+[[ "$CAMERA_SOURCE" == "usb" || "$CAMERA_SOURCE" == "csi" ]] || { echo "ОШИБКА: MONKEYS_CAMERA_SOURCE должен быть usb или csi" >&2; exit 2; }
 CAMERA="${MONKEYS_CAMERA:-/dev/v4l/by-id/usb-Arducam_Technology_Co.__Ltd._Arducam_OV9281_USB_Camera_UC762-video-index0}"
 LUNA="${MONKEYS_LUNA:-/dev/ttyAMA2}"
 FC="${MONKEYS_FC:-tcp://127.0.0.1:5760}"
 CAMERA_YAML="${MONKEYS_CAMERA_YAML:-$ROOT/config/ov9281_current_mount.yaml}"
+if [[ "$CAMERA_SOURCE" == "csi" && -z "${MONKEYS_CAMERA_YAML:-}" ]]; then
+  CAMERA_YAML="$ROOT/config/ov5647_current_mount.yaml"
+fi
 RUNTIME_JSON="${MONKEYS_RUNTIME_JSON:-$ROOT/config/runtime.json}"
 
 CFG_FOCAL_SCALE="0.931"
@@ -15,13 +20,19 @@ CFG_MAX_FEATURES="500"
 CFG_LOCAL_GUI="1"
 if [[ -f "$RUNTIME_JSON" ]]; then
   read -r CFG_FOCAL_SCALE RX0C RY0C RX1C RY1C CFG_MAX_FEATURES CFG_LOCAL_GUI < <(
-    python3 - "$RUNTIME_JSON" <<'PY'
+    python3 - "$RUNTIME_JSON" "$CAMERA_SOURCE" <<'PY'
 import json,sys
 with open(sys.argv[1],"r",encoding="utf-8") as f:
     d=json.load(f)
-roi=d.get("feature_roi",[0.20,0.32,0.80,0.90])
+source=sys.argv[2]
+defaults={
+    "usb":{"focal_scale":0.931,"feature_roi":[0.20,0.32,0.80,0.90]},
+    "csi":{"focal_scale":1.0,"feature_roi":[0.0,0.0,1.0,1.0]},
+}
+profile=d.get("camera_profiles",{}).get(source,defaults[source])
+roi=profile["feature_roi"]
 print(
-    d.get("focal_scale",0.931),
+    profile["focal_scale"],
     roi[0],roi[1],roi[2],roi[3],
     d.get("max_features",500),
     1 if d.get("local_gui",True) else 0
@@ -95,7 +106,9 @@ if [[ "${MONKEYS_FAST_RESTART:-0}" != "1" ]]; then
   bash "$ROOT/scripts/audit_fc_params.sh"
 fi
 
-[[ -e "$CAMERA" ]] || { echo "ОШИБКА: камера не найдена: $CAMERA" >&2; exit 2; }
+if [[ "$CAMERA_SOURCE" == "usb" ]]; then
+  [[ -e "$CAMERA" ]] || { echo "ОШИБКА: камера не найдена: $CAMERA" >&2; exit 2; }
+fi
 [[ -e "$LUNA" ]] || { echo "ОШИБКА: TF-Luna не найден: $LUNA" >&2; exit 2; }
 if [[ "$FC" != tcp://* ]]; then
   [[ -e "$FC" ]] || { echo "ОШИБКА: FC не найден: $FC" >&2; exit 2; }
@@ -178,9 +191,9 @@ if [[ "${MONKEYS_FAST_RESTART:-0}" == "1" ]]; then
   echo "FAST RESTART: использую уже проверенный runtime $CACHED_BIN"
 else
   if ! g++ -std=c++17 -O2 -DNDEBUG -pthread -Wno-address-of-packed-member \
-    $(pkg-config --cflags opencv4) -I"$MAVLINK_ROOT" -I"$ROOT/src" \
+    $(pkg-config --cflags opencv4 libcamera) -I"$MAVLINK_ROOT" -I"$ROOT/src" \
     "$ROOT/src/optical_flow_mavlink.cpp" -o "$BIN" \
-    $(pkg-config --libs opencv4) -lpthread >"$BUILD_LOG" 2>&1; then
+    $(pkg-config --libs opencv4 libcamera) -lpthread >"$BUILD_LOG" 2>&1; then
     echo "ОШИБКА СБОРКИ. Последние 80 строк:"
     tail -80 "$BUILD_LOG"
     exit 1
@@ -193,7 +206,7 @@ cat <<EOF
 ======================================================================
 monkeysStab — OPTICAL FLOW
 ======================================================================
-OV9281 -> OPTICAL_FLOW -> ArduPilot EKF3
+${CAMERA_SOURCE} -> OPTICAL_FLOW -> ArduPilot EKF3
 TF-Luna -> DISTANCE_SENSOR
 
 camera: $CAMERA
@@ -211,6 +224,7 @@ EOF
 
 ARGS=(
   "$CAMERA" "$LUNA" "$FC" "$CSV" "$CAMERA_YAML" "$FOCAL_SCALE"
+  --camera-source "$CAMERA_SOURCE"
   --feature-roi "$RX0" "$RY0" "$RX1" "$RY1"
   --max-features "$MAX_FEATURES"
   --diag-camera-x-m "$CAMERA_X_M"

@@ -15,6 +15,7 @@
 #include "ardupilotmega/mavlink.h"
 
 #include "runtime.hpp"
+#include "camera_source_csi.hpp"
 #include "mavlink_io.hpp"
 #include "metric_odometry_shadow.hpp"
 #include "metric_shadow_sync.hpp"
@@ -2023,6 +2024,7 @@ int main(int argc,char** argv){
   bool return_manual_target=false;
   bool stabilised_unified_publish=false;
   bool raw_unified_publish=false;
+  std::string camera_source="usb";
   std::string dataset_dir;
   std::string dataset_surface;
   double dataset_duration_sec=0.0;
@@ -2051,6 +2053,7 @@ int main(int argc,char** argv){
     else if(a=="--return-manual-target") return_manual_target=true;
     else if(a=="--stabilised-unified-publish") stabilised_unified_publish=true;
     else if(a=="--raw-unified-publish") raw_unified_publish=true;
+    else if(a=="--camera-source" && i+1<argc) camera_source=argv[++i];
     else if(a=="--dataset-dir" && i+1<argc) dataset_dir=argv[++i];
     else if(a=="--dataset-surface" && i+1<argc) dataset_surface=argv[++i];
     else if(a=="--dataset-duration-sec" && i+1<argc) dataset_duration_sec=std::stod(argv[++i]);
@@ -2079,6 +2082,11 @@ int main(int argc,char** argv){
       g_obs_shadow_enabled=false;
     }
   }
+  if(camera_source!="usb" && camera_source!="csi"){
+    std::cerr<<"ОШИБКА: --camera-source должен быть usb или csi\n";
+    return 2;
+  }
+  const bool use_csi=(camera_source=="csi");
   if(stabilised_unified_publish && raw_unified_publish){
     std::cerr<<"ОШИБКА: --stabilised-unified-publish и --raw-unified-publish взаимоисключающие\n";
     return 2;
@@ -2145,7 +2153,14 @@ int main(int argc,char** argv){
     calib.fx*=focal_scale; calib.fy*=focal_scale;
     calib.K=(cv::Mat_<double>(3,3)<<calib.fx,0,calib.cx,0,calib.fy,calib.cy,0,0,1);
 
-    Camera cam; cam.openDev(camdev);
+    Camera cam;
+    std::unique_ptr<jtzero::CameraSourceCSI> csi;
+    if(use_csi){
+      csi=std::make_unique<jtzero::CameraSourceCSI>();
+      csi->start();
+    } else {
+      cam.openDev(camdev);
+    }
     LunaReader luna; luna.start(lunadev);
     FlowFc fc; fc.start(fcdev);
     if(!remote_log_path.empty()){
@@ -2245,6 +2260,7 @@ int main(int argc,char** argv){
     int64_t flight_gate_begin_ns=monoNs();
     int64_t last_not_ready_print_ns=0;
     constexpr double kReadyStableSec=3.0;
+   constexpr double kLunaLocalFreshMs=600.0; // TF-Luna low-rate mode; bench validation required
     constexpr double kReadyTimeoutSec=20.0;
     constexpr double kReadyMinRangeM=0.05;
     constexpr double kReadyMaxRangeM=10.0;
@@ -2513,7 +2529,7 @@ int main(int argc,char** argv){
     }
 
     std::cerr<<"JT-ZERO OPTICAL FLOW MAVLINK MVP v2\n"
-             <<"camera="<<camdev<<"\n"
+             <<"camera="<<(use_csi ? "OV5647 CSI" : camdev)<<"\n"
              <<"fx/fy effective="<<calib.fx<<" / "<<calib.fy
              <<" (focal_scale="<<focal_scale<<")\n"
              <<"max_features="<<g_max_features<<"\n"
@@ -2561,9 +2577,19 @@ int main(int argc,char** argv){
     bool startup_clock_reset_done=false;
 
     while(g_running){
-      pollfd p{cam.fd,POLLIN,0};
+      jtzero::CameraFrame csi_frame;
       const int64_t camera_poll_enter_ns=monoNs();
-      const int pr=poll(&p,1,20);
+      int pr=0;
+      if(use_csi){
+        if(csi->newest(csi_frame)) pr=1;
+        else {
+          std::this_thread::sleep_for(std::chrono::milliseconds(2));
+          continue;
+        }
+      } else {
+        pollfd p{cam.fd,POLLIN,0};
+        pr=poll(&p,1,20);
+      }
       const int64_t camera_poll_exit_ns=monoNs();
       if(pr<0){if(errno==EINTR)continue;fail("camera poll");}
       if(pr<=0)continue;
@@ -2607,6 +2633,7 @@ int main(int argc,char** argv){
       static uint64_t lkfc_seq=0;
 
       std::vector<uint8_t> latest_jpeg;
+      cv::Mat gray;
       int64_t ts=0;
       int64_t selected_v4l2_ts_ns=0;
       int64_t selected_dq_mono_ns=0;
@@ -2617,7 +2644,19 @@ int main(int argc,char** argv){
       int64_t camera_dq_last_exit_ns=0;
       double camera_dq_ioctl_max_ms=0.0;
       uint64_t camera_dq_count=0;
-      while(g_running){
+      if(use_csi){
+        gray=csi_frame.gray;
+        ts=csi_frame.sensor_ns;
+        selected_dq_mono_ns=csi_frame.callback_ns;
+        // CSI has no V4L2 buffer/timestamp/flags. Keep V4L2-specific CSV
+        // fields at zero; camera_ts_ns retains the sensor timestamp.
+        camera_dq_count=1;
+        ++fps_dqbuf; ++w5w_dqbuf;
+        // The existing forensic ring and dataset format require JPEG bytes.
+        // Encoding here preserves their on-disk format without decoding CSI.
+        if(!cv::imencode(".jpg",gray,latest_jpeg,
+                        {cv::IMWRITE_JPEG_QUALITY,85})) continue;
+      } else while(g_running){
         v4l2_buffer b{}; b.type=V4L2_BUF_TYPE_VIDEO_CAPTURE; b.memory=V4L2_MEMORY_MMAP;
         const int64_t dq_enter_ns=monoNs();
         if(camera_dq_first_enter_ns==0) camera_dq_first_enter_ns=dq_enter_ns;
@@ -2690,8 +2729,10 @@ int main(int argc,char** argv){
         break;
       }
 
-      cv::Mat raw(1,(int)latest_jpeg.size(),CV_8UC1,latest_jpeg.data());
-      cv::Mat gray=cv::imdecode(raw,cv::IMREAD_GRAYSCALE);
+      if(!use_csi){
+        cv::Mat raw(1,(int)latest_jpeg.size(),CV_8UC1,latest_jpeg.data());
+        gray=cv::imdecode(raw,cv::IMREAD_GRAYSCALE);
+      }
       if(gray.empty()) continue;
       ++fps_decoded; ++w5w_decoded;
       ++frame;
@@ -2708,7 +2749,7 @@ int main(int argc,char** argv){
         startup_clock_reset_done=true;
         std::cerr
           <<"STARTUP_CLOCK_RESYNC_V1: HIGHRES_CLOCK_MAP_V2 reset "
-          <<"10 s after first decoded OV9281 frame\n";
+          <<"10 s after first decoded camera frame\n";
       }
 
       // OV9281_OF_AE_V2: lightweight adaptive shutter for optical flow.
@@ -2716,7 +2757,7 @@ int main(int argc,char** argv){
       // sparse histogram inside the OF ROI: no ROI clone, sort or OpenCV work.
       // Update only at ~2 Hz (100 fps / 50 frames) to avoid control chatter.
       static const int64_t ae_capture_start_ns=monoNs();
-      if((frame%50)==0 && monoNs()-ae_capture_start_ns>=1000000000LL){
+      if(!use_csi && (frame%50)==0 && monoNs()-ae_capture_start_ns>=1000000000LL){
         const int ax0=std::clamp((int)std::lround(g_feature_roi.x0*gray.cols),0,gray.cols-1);
         const int ay0=std::clamp((int)std::lround(g_feature_roi.y0*gray.rows),0,gray.rows-1);
         const int ax1=std::clamp((int)std::lround(g_feature_roi.x1*gray.cols),ax0+1,gray.cols);
@@ -2854,7 +2895,7 @@ int main(int argc,char** argv){
         // the camera often sees BOTH depth planes, so there is no single metric
         // scale for optical flow. Do not feed those mixed-plane frames to EKF.
         // Resume automatically after 0.4 s with the newest frame anchor.
-        if(bench_height_override<=0.0 && hl && lage<100.0 && lm>=0.03){
+        if(bench_height_override<=0.0 && hl && lage<kLunaLocalFreshMs && lm>=0.03){
           if(terrain_prev_range_valid){
             const double d=std::abs(lm-terrain_prev_range_m);
             const double ratio=std::max(lm,terrain_prev_range_m)/
@@ -2875,7 +2916,7 @@ int main(int argc,char** argv){
         }
 
         double current_camera_height_m=0.0;
-        bool current_camera_height_valid=hl && lage<100.0 && lm>=0.03;
+        bool current_camera_height_valid=hl && lage<kLunaLocalFreshMs && lm>=0.03;
         if(current_camera_height_valid){
           current_camera_height_m=lm;
           // Convert rangefinder optical origin to camera optical origin using
@@ -5214,7 +5255,7 @@ int main(int argc,char** argv){
           const double ready_range=(bench_height_override>0.0)?bench_height_override:lm;
           const bool luna_ok=(bench_true_camera_height>0.0 && bench_height_override>0.0)
             ? (ready_range>=kReadyMinRangeM && ready_range<=kReadyMaxRangeM)
-            : (hl && lage>=-2.0 && lage<100.0 &&
+            : (hl && lage>=-2.0 && lage<kLunaLocalFreshMs &&
                ready_range>=kReadyMinRangeM && ready_range<=kReadyMaxRangeM);
           const int64_t ready_check_ns=monoNs();
           const bool flow_ok=
