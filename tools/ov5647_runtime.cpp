@@ -11,11 +11,6 @@
 
 int main() {
     try {
-        const std::string yaml =
-            "config/ov5647_current_mount.yaml";
-
-        CameraCalib calib = loadCameraCalib(yaml);
-
         cv::FileStorage config(
             "config/runtime_ov5647.json",
             cv::FileStorage::READ | cv::FileStorage::FORMAT_JSON
@@ -47,9 +42,20 @@ int main() {
         if (camera_source == "usb" && usb_device.empty())
             throw std::runtime_error("USB device not specified");
 
-        if (camera_source == "usb")
-            throw std::runtime_error(
-                "USB mode disabled until separate camera calibration is configured");
+        const std::string yaml =
+            camera_source == "csi"
+                ? "config/ov5647_current_mount.yaml"
+                : "config/ov9281_current_mount.yaml";
+
+        if (camera_source == "usb") {
+            if (config["usb_focal_scale"].empty())
+                throw std::runtime_error(
+                    "USB mode disabled: usb_focal_scale not configured");
+
+            config["usb_focal_scale"] >> focal_scale;
+        }
+
+        CameraCalib calib = loadCameraCalib(yaml);
 
         if (roi.size() != 4 ||
             !std::isfinite(focal_scale) ||
