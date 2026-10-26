@@ -14,11 +14,46 @@ int main() {
 
         CameraCalib calib = loadCameraCalib(yaml);
 
-        g_feature_roi.x0 = 0.20;
-        g_feature_roi.y0 = 0.32;
-        g_feature_roi.x1 = 0.80;
-        g_feature_roi.y1 = 0.90;
-        g_max_features = 500;
+        cv::FileStorage config(
+            "config/runtime_ov5647.json",
+            cv::FileStorage::READ | cv::FileStorage::FORMAT_JSON
+        );
+
+        if (!config.isOpened())
+            throw std::runtime_error("Cannot open CSI runtime config");
+
+        double focal_scale = 1.0;
+        config["focal_scale"] >> focal_scale;
+
+        std::vector<double> roi;
+        config["feature_roi"] >> roi;
+
+        int max_features = 500;
+        config["max_features"] >> max_features;
+
+        if (roi.size() != 4 ||
+            !std::isfinite(focal_scale) ||
+            focal_scale <= 0.0 ||
+            max_features <= 0 ||
+            roi[0] < 0.0 || roi[1] < 0.0 ||
+            roi[2] > 1.0 || roi[3] > 1.0 ||
+            roi[0] >= roi[2] || roi[1] >= roi[3]) {
+            throw std::runtime_error("Invalid CSI runtime config");
+        }
+
+        // Same focal_scale convention as production.
+        calib.fx *= focal_scale;
+        calib.fy *= focal_scale;
+        calib.K.at<double>(0, 0) = calib.fx;
+        calib.K.at<double>(1, 1) = calib.fy;
+
+        g_feature_roi.x0 = roi[0];
+        g_feature_roi.y0 = roi[1];
+        g_feature_roi.x1 = roi[2];
+        g_feature_roi.y1 = roi[3];
+        g_max_features = max_features;
+
+        config.release();
 
         // Production shadow diagnostics are disabled only
         // inside this standalone process.
