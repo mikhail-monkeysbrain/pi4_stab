@@ -1,0 +1,14 @@
+%YAML:1.0
+---
+camera_id: ov5647_current_mount
+T_BS:
+  rows: 4
+  cols: 4
+  dt: d
+  data: [-1., 0., 0., 0., 0., 1., 0., 0., 0., 0., -1., 0., 0., 0., 0., 1.]
+rate_hz: 60
+resolution: [640, 480]
+camera_model: pinhole
+intrinsics: [1097.67985, 1090.16028, 320., 240.]
+distortion_model: radial-tangential
+distortion_coefficients: [-0.55462130, 1.63595601, -0.00507743, 0.00303382, 0.]
