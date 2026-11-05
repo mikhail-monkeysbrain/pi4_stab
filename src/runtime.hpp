@@ -80,7 +80,7 @@ struct Camera {
     //   GT 393 mm -> WORKED5 381.192 mm (-3.005%)
     //   GT 465 mm -> WORKED5 455.067 mm (-2.136%)
     // The second run had 2935/2935 valid frames with no reason5/reason6.
-    constexpr int kWidth=640, kHeight=480, kCameraFps=100;
+    constexpr int kWidth=640, kHeight=480, kCameraFps=60;
     constexpr int kExposureAbsolute=50, kGain=0;
 
     fd=::open(dev.c_str(),O_RDWR|O_NONBLOCK);

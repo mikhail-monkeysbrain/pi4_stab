@@ -158,6 +158,22 @@ def main():
     udp.bind(("0.0.0.0",a.udp_port)); udp.setblocking(False)
 
     clients=[]; client_tx={}; client_spy={}; gcs=set(); udp_spy={}
+    # JTZero UART TX queue: preserve ordering and partial writes.
+    uart_tx=bytearray()
+    uart_tx_limit=16384
+    uart_tx_written=0
+    uart_tx_eagain=0
+    uart_tx_overflow=0
+
+    def enqueue_uart(data):
+        nonlocal uart_tx_overflow
+        if len(uart_tx)+len(data)>uart_tx_limit:
+            uart_tx_overflow+=1
+            print(f"UART_TX_OVERFLOW bytes={len(data)} queued={len(uart_tx)} "
+                  f"count={uart_tx_overflow}",flush=True)
+            return False
+        uart_tx.extend(data)
+        return True
     rx_counter=MavRxCounter()
     rx_stat_t=time.monotonic()
     rx_stat_counts=Counter()
@@ -206,7 +222,18 @@ def main():
     try:
         while True:
             r=[ser,srv,udp]+clients
-            ready,_,_=select.select(r,[],[],0.5)
+            ready,writable,_=select.select(
+                r,[ser] if uart_tx else [],[],0.05 if uart_tx else 0.5)
+            if ser in writable and uart_tx:
+                try:
+                    n=os.write(ser,uart_tx)
+                    if n>0:
+                        del uart_tx[:n]
+                        uart_tx_written+=n
+                except BlockingIOError:
+                    uart_tx_eagain+=1
+                except InterruptedError:
+                    pass
             for x in ready:
                 if x==ser:
                     try: data=os.read(ser,65536)
@@ -326,8 +353,7 @@ def main():
                         if block_rate:
                             print(f"FC_TX_RATE_BLOCK source=udp:{peer[0]}:{peer[1]} bytes={len(data)}",flush=True)
                         else:
-                            try: os.write(ser,data)
-                            except BlockingIOError: pass
+                            enqueue_uart(data)
                 else:
                     c=x
                     try: data=c.recv(65536)
@@ -341,8 +367,7 @@ def main():
                         continue
                     spy=client_spy.get(c)
                     if spy is not None: spy.feed(data)
-                    try: os.write(ser,data)
-                    except BlockingIOError: pass
+                    enqueue_uart(data)
     finally:
         for c in clients: c.close()
         srv.close(); udp.close(); os.close(ser)

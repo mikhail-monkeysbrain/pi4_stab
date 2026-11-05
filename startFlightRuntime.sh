@@ -2,9 +2,9 @@
 set -Eeuo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$ROOT"
-export MONKEYS_FC_UART=/dev/ttyAMA4
+export MONKEYS_FC_UART=/dev/serial0
 export MONKEYS_FC_BAUD=460800
-export MONKEYS_LUNA=/dev/ttyAMA2
+export MONKEYS_LUNA="${MONKEYS_LUNA:-/dev/serial0}"
 
 export MONKEYS_RAW_UNIFIED_PUBLISH="${MONKEYS_RAW_UNIFIED_PUBLISH:-1}"
 

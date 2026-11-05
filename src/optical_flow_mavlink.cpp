@@ -890,7 +890,29 @@ struct FlowFc {
       requestRate(fd,sys,comp,MAVLINK_MSG_ID_ATTITUDE,100);
       requestRate(fd,sys,comp,MAVLINK_MSG_ID_LOCAL_POSITION_NED,20);
 
+      // JTZERO_RC_CHANNELS_RECOVERY_V1
+      // Restore RC telemetry only when RC_CHANNELS becomes stale.
+      int64_t last_rc_request_ns = monoNs();
+
       while(g_running){
+        const int64_t rc_now_ns = monoNs();
+
+        if(rc_now_ns - last_rc_request_ns >= 3000000000LL){
+          bool rc_stale = false;
+          {
+            std::lock_guard<std::mutex> l(mu);
+            rc_stale = !rc.valid ||
+                (rc_now_ns - rc.recv_ns > 1000000000LL);
+          }
+
+          if(rc_stale){
+            requestRate(fd,sys,comp,MAVLINK_MSG_ID_RC_CHANNELS,20);
+            std::cerr << "FC: RC_CHANNELS stale, requesting 20 Hz\\n";
+          }
+
+          last_rc_request_ns = rc_now_ns;
+        }
+
         pollfd p{fd,POLLIN,0};
         if(poll(&p,1,50)<=0)continue;
         for(;;){
@@ -1674,6 +1696,9 @@ int main(int argc,char** argv){
     uint64_t terrain_step_reject_total=0;
     bool bridge_pending=false;
     int64_t last_range_send_ns=0;
+    // Last confirmed TF-Luna distance for MAVLink hold-on-loss.
+    double last_valid_luna_m=0.0;
+    bool have_last_valid_luna=false;
     double terrain_prev_range_m=0.0;
     bool terrain_prev_range_valid=false;
     int64_t terrain_guard_until_ns=0;
@@ -1755,7 +1780,7 @@ int main(int argc,char** argv){
     // Trigger only on a high edge; re-arm after both channels return below 1500 us.
     uint64_t rc_zero_seq=0;
     bool rc_zero_latched=false;
-    uint16_t rc6_last_us=0,rc8_last_us=0,rc10_last_us=0;
+    uint16_t rc6_last_us=0,rc8_last_us=0,rc10_last_us=0,rc11_last_us=0;
     constexpr uint16_t kRcZeroPressUs=1700;
     constexpr uint16_t kRcZeroReleaseUs=1500;
 
@@ -2305,7 +2330,17 @@ int main(int argc,char** argv){
         }
 
         double lm=0; int strength=0; int64_t lns=0;
-        const bool hl=luna.latest(&lm,&strength,&lns);
+        bool hl=luna.latest(&lm,&strength,&lns);
+
+        // JTZero BENCH ONLY: synthetic rangefinder.
+        // The damaged physical sensor is not required in this mode.
+        if(bench_height_override>0.0){
+          lm=bench_height_override;
+          strength=255;
+          lns=now;
+          hl=true;
+        }
+
         const double lage=hl?(now-lns)*1e-6:1e9;
         bool range_sent=false;
         const double range_to_fc=(bench_height_override>0.0)?bench_height_override:lm;
@@ -2329,8 +2364,32 @@ int main(int argc,char** argv){
         }
         const bool terrain_step_guard = now < terrain_guard_until_ns;
 
-        if(hl&&lage<200&&(last_range_send_ns==0||now-last_range_send_ns>=50000000LL)){
-          range_sent=range_pub.sendDistanceSensor(fc.fd,(uint32_t)(now/1000000LL),range_to_fc);
+        // TF-Luna LIVE / HELD / INIT.
+        // Retain only valid, fresh physical measurements.
+        // Synthetic bench mode remains explicitly separate.
+        const bool luna_live =
+          bench_height_override<=0.0 &&
+          hl && lage>=0.0 && lage<200.0 &&
+          std::isfinite(lm) && lm>=0.03 && lm<=8.0;
+
+        if(luna_live){
+          last_valid_luna_m=lm;
+          have_last_valid_luna=true;
+        }
+
+        const bool range_available =
+          bench_height_override>0.0 || have_last_valid_luna;
+
+        const double published_range_m =
+          bench_height_override>0.0
+            ? bench_height_override
+            : last_valid_luna_m;
+
+        if(range_available &&
+           (last_range_send_ns==0 ||
+            now-last_range_send_ns>=50000000LL)){
+          range_sent=range_pub.sendDistanceSensor(
+            fc.fd,(uint32_t)(now/1000000LL),published_range_m);
           last_range_send_ns=now;
           if(range_sent)++range_sent_total;
         }
@@ -3947,6 +4006,7 @@ int main(int argc,char** argv){
         {
           FlowFcRc rcin{}; double rc_age_ms=1e9;
           const bool rc_fresh=fc.latestRc(&rcin,&rc_age_ms) && rc_age_ms<500.0;
+          rc11_last_us=0; // invalid unless current FC RC sample is fresh
           if(rc_fresh){
             const uint16_t rc6=rcin.pwm[5];
             const uint16_t rc8=rcin.pwm[7];
@@ -3954,8 +4014,9 @@ int main(int argc,char** argv){
             rc6_last_us=rc6;
             rc8_last_us=rc8;
             rc10_last_us=rc10;
-            const bool pressed=(rc6>=kRcZeroPressUs)||(rc8>=kRcZeroPressUs)||(rc10>=kRcZeroPressUs);
-            const bool released=(rc6<=kRcZeroReleaseUs)&&(rc8<=kRcZeroReleaseUs)&&(rc10<=kRcZeroReleaseUs);
+            rc11_last_us=rcin.pwm[10];
+            const bool pressed=(rc6>=kRcZeroPressUs)||(rc8>=kRcZeroPressUs);
+            const bool released=(rc6<=kRcZeroReleaseUs)&&(rc8<=kRcZeroReleaseUs);
             if(pressed && !rc_zero_latched){
               rc_zero_latched=true;
               ++rc_zero_seq;
@@ -4678,6 +4739,7 @@ int main(int argc,char** argv){
             <<",\"rc6_us\":"<<rc6_last_us
             <<",\"rc8_us\":"<<rc8_last_us
             <<",\"rc10_us\":"<<rc10_last_us
+            <<",\"rc11_us\":"<<rc11_last_us
             <<",\"roll_deg\":"<<jsonNumber(fg_ok?fg.roll*180.0/M_PI:0.0)
             <<",\"pitch_deg\":"<<jsonNumber(fg_ok?fg.pitch*180.0/M_PI:0.0)
             <<",\"yaw_deg\":"<<jsonNumber(fg_ok?fg.yaw*180.0/M_PI:0.0)

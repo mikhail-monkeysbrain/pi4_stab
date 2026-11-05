@@ -132,6 +132,26 @@ def load_json(path, fallback):
     except Exception:
         return fallback
 
+
+PILOT_NAME_FILE = Path("/home/vio/jtzero_pilot_name.json")
+
+def load_pilot_name():
+    d = load_json(PILOT_NAME_FILE, {})
+    value = d.get("pilot_name", "") if isinstance(d, dict) else ""
+    return value if isinstance(value, str) and re.fullmatch(r"[A-Za-z0-9]{1,12}", value) else ""
+
+def save_pilot_name(value):
+    if not isinstance(value, str) or not re.fullmatch(r"[A-Za-z0-9]{1,12}", value):
+        raise ValueError("Имя пилота: только латиница и цифры, 1-12 символов")
+    tmp = PILOT_NAME_FILE.with_suffix(".json.tmp")
+    with open(tmp, "w", encoding="utf-8") as f:
+        json.dump({"pilot_name": value}, f)
+        f.write("\n")
+        f.flush()
+        os.fsync(f.fileno())
+    os.replace(tmp, PILOT_NAME_FILE)
+    return value
+
 def load_config():
     d=load_json(CONFIG, dict(DEFAULTS))
     out=dict(DEFAULTS)
@@ -448,6 +468,7 @@ def live_payload(raw):
         "rc6_us":raw.get("rc6_us",0),
         "rc8_us":raw.get("rc8_us",0),
         "rc10_us":raw.get("rc10_us",0),
+        "rc11_us":raw.get("rc11_us",0),
         "vx":raw.get("vx",0.0),"vy":raw.get("vy",0.0),"vz":raw.get("vz",0.0),
         "roll_deg":raw.get("roll_deg",0.0),
         "pitch_deg":raw.get("pitch_deg",0.0),
@@ -1776,6 +1797,18 @@ button{cursor:pointer}
    <button class="tabBtn" onclick="showSettingsTab('geometry',this)">Геометрия</button>
   </div>
   <div id="settings-runtime" class="tabPane active">
+    <div class="card" style="max-width:720px;margin-bottom:12px">
+     <h3>Пилот / OSD</h3>
+     <div class="field">
+      <span>Имя пилота</span>
+      <input id="pilotNameInput" type="text" maxlength="12"
+             placeholder="MONKEY1" autocomplete="off">
+     </div>
+     <p style="color:#86a7bf">Латиница и цифры, 1-12 символов</p>
+     <button class="btn blue" onclick="savePilotName()">СОХРАНИТЬ ИМЯ</button>
+     <span id="pilotNameMsg"></span>
+    </div>
+
    <div class="card" style="max-width:720px">
     <h3>Параметры Optical Flow runtime</h3>
     <div class="field"><span>Focal scale</span><input id="sfocal" type="number" min=".5" max="2" step=".001"></div>
@@ -1929,6 +1962,35 @@ function setActiveMode(mode){
  if(mode==='Stabilize'&&$('mStab'))$('mStab').classList.add('blue');
  if(mode==='PosHold'&&$('mPos'))$('mPos').classList.add('blue');
 }
+
+async function loadPilotName(){
+ try {
+  let d = await api('/api/pilot-name');
+  $('pilotNameInput').value = d.pilot_name || '';
+ } catch(e) {
+  $('pilotNameMsg').textContent = e.message;
+ }
+}
+
+async function savePilotName(){
+ const name = $('pilotNameInput').value;
+ const msg = $('pilotNameMsg');
+ if (!/^[A-Za-z0-9]{1,12}$/.test(name)){
+  msg.textContent = 'Только латиница и цифры, 1-12 символов';
+  return;
+ }
+ try {
+  let d = await api('/api/pilot-name', {
+   method:'POST',
+   headers:{'Content-Type':'application/json'},
+   body:JSON.stringify({pilot_name:name})
+  });
+  msg.textContent = 'Сохранено: ' + d.pilot_name;
+ } catch(e) {
+  msg.textContent = 'Ошибка: ' + e.message;
+ }
+}
+
 async function loadConfig(){
  let j=await api('/api/config'),c=j.runtime;
  $('focal').value=c.focal_scale;[$('r0').value,$('r1').value,$('r2').value,$('r3').value]=c.feature_roi;$('features').value=c.max_features;
@@ -2397,9 +2459,138 @@ async function refreshVoPreview(){
  }catch(e){st.textContent='нет кадра'}
  finally{voPreviewBusy=false}
 }
-loadConfig();initGL();connectTelemetryWs();refreshRuntimeStatus();refreshMessages();refreshFc();refreshJournal();refreshRunRecordStatus();refreshVoPreview();
+loadConfig();loadPilotName();initGL();connectTelemetryWs();refreshRuntimeStatus();refreshMessages();refreshFc();refreshJournal();refreshRunRecordStatus();refreshVoPreview();
 setInterval(refreshRuntimeStatus,1000);setInterval(refreshMessages,1800);setInterval(refreshFc,1800);setInterval(refreshJournal,3000);setInterval(refreshRunRecordStatus,1500);setInterval(refreshVoPreview,200);
 window.addEventListener('resize',()=>{let vm=window.visualizationMode||'simple';if(vm==='light'&&latest)drawLightScene(latest);else renderScene();if(latest)drawHistory(latest.history||[]);drawMotionCompare()});
+</script>
+<!-- VTX_WEB_INTEGRATION_V1 -->
+<section id="vtxPanel" style="margin:16px;padding:16px;border:1px solid #667;border-radius:10px;background:#171d27;color:#fff;font:14px sans-serif">
+  <strong>VTX — SmartAudio / IRC Tramp (GPIO12)</strong>
+  <div id="vtxStatus" style="margin:12px 0">Не опрошен</div>
+  <label>Бэнд <select id="vtxBand" onchange="vtxUpdateChannels()"></select></label>
+  <label style="margin-left:12px">Канал <select id="vtxChannel" onchange="vtxUpdateFrequency()"></select></label>
+  <span id="vtxSelectedFrequency" style="margin-left:12px">— МГц</span>
+  <button type="button" onclick="vtxApplyFrequency()">Установить частоту</button>
+  <label style="margin-left:12px">Мощность VTX
+    <select id="vtxPower"></select>
+  </label>
+  <button type="button" onclick="vtxApplyPower()">Установить мощность</button>
+  <button type="button" onclick="vtxRefresh()">Обновить</button>
+  <div id="vtxMessage" style="margin-top:10px" aria-live="polite"></div>
+</section>
+<script>
+const VTX_BANDS = Object.freeze({
+  A: [5865,5845,5825,5805,5785,5765,5745,5725],
+  B: [5733,5752,5771,5790,5809,5828,5847,5866],
+  E: [5705,5685,5665,5645,5885,5905,5925,5945],
+  F: [5740,5760,5780,5800,5820,5840,5860,5880],
+  R: [5658,5695,5732,5769,5806,5843,5880,5917]
+});
+const vtxBandSelect = document.getElementById('vtxBand');
+for (const band of Object.keys(VTX_BANDS)) {
+  vtxBandSelect.add(new Option(band, band));
+}
+function vtxUpdateChannels(selectedChannel) {
+  const band = vtxBandSelect.value;
+  const select = document.getElementById('vtxChannel');
+  const previous = selectedChannel || select.value || '1';
+  select.replaceChildren();
+  VTX_BANDS[band].forEach((frequency, index) => {
+    select.add(new Option((index + 1) + ' — ' + frequency + ' МГц', String(index + 1)));
+  });
+  select.value = previous;
+  if (!select.value) select.value = '1';
+  vtxUpdateFrequency();
+}
+function vtxUpdateFrequency() {
+  const band = vtxBandSelect.value;
+  const channel = Number(document.getElementById('vtxChannel').value);
+  const frequency = VTX_BANDS[band]?.[channel - 1];
+  document.getElementById('vtxSelectedFrequency').textContent =
+    frequency ? frequency + ' МГц' : '— МГц';
+}
+function vtxSelectFrequency(frequency) {
+  // 5880 MHz belongs to F8 and R7; prefer Raceband for unambiguous readback.
+  const order = ['R', 'A', 'B', 'E', 'F'];
+  for (const band of order) {
+    const index = VTX_BANDS[band].indexOf(Number(frequency));
+    if (index !== -1) {
+      vtxBandSelect.value = band;
+      vtxUpdateChannels(String(index + 1));
+      return true;
+    }
+  }
+  document.getElementById('vtxSelectedFrequency').textContent =
+    'Вне таблицы: ' + frequency + ' МГц';
+  document.getElementById('vtxChannel').value = '';
+  return false;
+}
+vtxBandSelect.value = 'R';
+vtxUpdateChannels('1');
+
+async function vtxRequest(path, options) {
+  const response = await fetch(path, options);
+  const body = await response.json();
+  if (!response.ok || body.ok === false) throw Error(body.error || body.status || JSON.stringify(body));
+  return body;
+}
+async function vtxRefresh() {
+  const msg = document.getElementById('vtxMessage');
+  try {
+    const j = await vtxRequest('/api/vtx/state');
+    const smart = j.protocol === 'SMARTAUDIO_V21';
+    document.getElementById('vtxStatus').textContent =
+      (smart ? 'SmartAudio V2.1' : 'IRC Tramp') + ': ' +
+      j.frequency_mhz + ' МГц; мощность: ' +
+      (smart ? j.current_power_dbm + ' dBm' : j.power_setting_raw + ' raw');
+    const mapped = vtxSelectFrequency(j.frequency_mhz);
+    const select = document.getElementById('vtxPower');
+    select.replaceChildren();
+    if (smart) {
+      for (const dbm of j.power_levels_dbm || []) {
+        select.add(new Option(dbm + ' dBm', String(dbm)));
+      }
+      select.value = String(j.current_power_dbm);
+      document.querySelector('button[onclick="vtxApplyPower()"]').disabled = true;
+      document.querySelector('button[onclick="vtxApplyPower()"]').title =
+        'SET POWER пока не подтверждён на оборудовании';
+    } else {
+      for (const raw of [25,100,200,400,600]) {
+        select.add(new Option(String(raw) + ' Tramp raw', String(raw)));
+      }
+      select.value = String(j.power_setting_raw);
+      document.querySelector('button[onclick="vtxApplyPower()"]').disabled = false;
+    }
+    msg.textContent = mapped ? 'Состояние прочитано' :
+      'Частота вне таблицы; выберите бэнд и канал для изменения';
+  } catch(e) { msg.textContent = 'Ошибка чтения VTX: ' + e.message; }
+}
+async function vtxWrite(path, payload) {
+  const msg = document.getElementById('vtxMessage');
+  if (!confirm('Изменить настройку передатчика Foxeer?')) return;
+  msg.textContent = 'Отправка команды…';
+  try {
+    const result = await vtxRequest(path, {
+      method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(payload)
+    });
+    await vtxRefresh();
+    msg.textContent = 'VTX: ' + (result.status || 'подтверждено');
+  } catch(e) { msg.textContent = 'Команда не подтверждена: ' + e.message; }
+}
+function vtxApplyFrequency() {
+  const band = vtxBandSelect.value;
+  const channel = Number(document.getElementById('vtxChannel').value);
+  const frequency = VTX_BANDS[band]?.[channel - 1];
+  if (!Number.isInteger(frequency)) {
+    document.getElementById('vtxMessage').textContent = 'Выберите корректный бэнд и канал';
+    return;
+  }
+  vtxWrite('/api/vtx/frequency', {frequency_mhz:frequency});
+}
+function vtxApplyPower() {
+  vtxWrite('/api/vtx/power', {power_raw:Number(document.getElementById('vtxPower').value)});
+}
+// No automatic polling: avoid UART contention with flight operations.
 </script>
 </body>
 </html>'''
@@ -2461,6 +2652,11 @@ class H(BaseHTTPRequestHandler):
                     self.send_header("Cache-Control","no-store, no-cache, must-revalidate")
                     self.send_header("Content-Length",str(len(data)))
                     self.end_headers();self.wfile.write(data)
+            elif p=="/api/vtx/state":  # VTX_WEB_INTEGRATION_V1
+                from vtx_web_bridge import state
+                self.send_json(state())
+            elif p=="/api/pilot-name":
+                self.send_json({"pilot_name":load_pilot_name()})
             elif p=="/api/config":
                 self.send_json({"runtime":load_config(),"geometry":load_json(GEOMETRY,{}),"fc_profile":load_json(FC_PROFILE,{})})
             elif p=="/api/status":
@@ -2515,7 +2711,16 @@ class H(BaseHTTPRequestHandler):
     def do_POST(self):
         p=urlparse(self.path).path
         try:
-            if p=="/api/config":
+            if p=="/api/vtx/frequency":  # VTX_WEB_INTEGRATION_V1
+                from vtx_web_bridge import set_frequency
+                self.send_json(set_frequency(self.body_json().get("frequency_mhz")))
+            elif p=="/api/vtx/power":
+                from vtx_web_bridge import set_power
+                self.send_json(set_power(self.body_json().get("power_raw")))
+            elif p=="/api/pilot-name":
+                name=save_pilot_name(self.body_json().get("pilot_name"))
+                self.send_json({"ok":True,"pilot_name":name})
+            elif p=="/api/config":
                 if running(): raise RuntimeError("Остановите flight runtime перед изменением стартовых параметров")
                 self.send_json({"ok":True,"runtime":save_config(self.body_json())})
             elif p=="/api/start": forensic_action("WEB_RUNTIME_START");self.send_json(start_runtime())
@@ -2566,6 +2771,503 @@ def ips():
     except Exception: pass
     return out
 
+
+
+# ===== JTZERO_RC10_VTX_V1 =====
+# RC10: one confirmed VTX channel step per button press.
+# This worker never runs IRC Tramp transactions in the UDP telemetry thread.
+
+_RC10_VTX_BANDS = {
+    "A": (5865,5845,5825,5805,5785,5765,5745,5725),
+    "B": (5733,5752,5771,5790,5809,5828,5847,5866),
+    "E": (5705,5685,5665,5645,5885,5905,5925,5945),
+    "F": (5740,5760,5780,5800,5820,5840,5860,5880),
+    "R": (5658,5695,5732,5769,5806,5843,5880,5917),
+}
+
+_RC10_VTX_SEQUENCE = [
+    (band, channel, frequency)
+    for band, frequencies in _RC10_VTX_BANDS.items()
+    for channel, frequency in enumerate(frequencies, 1)
+]
+
+_RC10_VTX_PROGRESS = Path(
+    "/home/vio/jtzero_rc10_vtx_progress.json"
+)
+
+_rc10_vtx_stop = threading.Event()
+_rc10_vtx_thread = None
+
+
+def _rc10_load_position(frequency):
+    # Preserve F8/R7 identity across RPi restarts.
+    data = load_json(_RC10_VTX_PROGRESS, {})
+    index = data.get("index") if isinstance(data, dict) else None
+
+    if type(index) is int and 0 <= index < 40:
+        if _RC10_VTX_SEQUENCE[index][2] == frequency:
+            return index
+
+    matches = [
+        i for i, entry in enumerate(_RC10_VTX_SEQUENCE)
+        if entry[2] == frequency
+    ]
+
+    if not matches:
+        return None
+
+    # 5880 MHz is shared by F8 and R7.
+    # Without saved band identity, follow existing Raceband preference.
+    if frequency == 5880:
+        return 38
+
+    return matches[0]
+
+
+def _rc10_save_position(index):
+    tmp = _RC10_VTX_PROGRESS.with_suffix(".json.tmp")
+    data = {
+        "index": index,
+        "band": _RC10_VTX_SEQUENCE[index][0],
+        "channel": _RC10_VTX_SEQUENCE[index][1],
+        "frequency_mhz": _RC10_VTX_SEQUENCE[index][2],
+    }
+
+    with open(tmp, "w", encoding="utf-8") as f:
+        json.dump(data, f)
+        f.write("\n")
+        f.flush()
+        os.fsync(f.fileno())
+
+    os.replace(tmp, _RC10_VTX_PROGRESS)
+
+
+def _rc10_change_vtx():
+    from vtx_web_bridge import state, set_frequency
+
+    # Always read actual confirmed VTX frequency first.
+    before = state()
+    current_freq = int(before["frequency_mhz"])
+
+    index = _rc10_load_position(current_freq)
+
+    if index is None:
+        # Unknown current frequency: enter cycle at A1.
+        next_index = 0
+    else:
+        next_index = (index + 1) % 40
+
+    band, channel, target_freq = _RC10_VTX_SEQUENCE[next_index]
+
+    with _lock:
+        latest = dict(_live_latest) if isinstance(_live_latest, dict) else {}
+        age = time.time() - _live_last_wall
+
+    # Check DISARMED and fresh telemetry again immediately before writing.
+    if age > 0.5 or latest.get("armed") is not False:
+        raise RuntimeError("FC not confirmed DISARMED or telemetry stale")
+
+    result = set_frequency(target_freq)
+
+    # set_frequency() already performs a confirmed Tramp transaction.
+    # Verify the updated shared state used by the OSD sender.
+    confirmed = load_json(
+        Path("/home/vio/jtzero_vtx_state.json"), {}
+    )
+
+    if (
+        confirmed.get("source") not in
+            ("IRC_TRAMP_CONFIRMED", "SMARTAUDIO_V21_CONFIRMED")
+        or confirmed.get("frequency_mhz") != target_freq
+    ):
+        raise RuntimeError(
+            "No confirmed VTX frequency after setting " +
+            str(target_freq)
+        )
+
+    _rc10_save_position(next_index)
+
+    print(
+        f"RC10 VTX: {band}{channel} "
+        f"{current_freq}->{target_freq} MHz CONFIRMED",
+        flush=True
+    )
+
+    log_event(
+        "INFO",
+        f"RC10 VTX -> {band}{channel} ({target_freq} MHz)"
+    )
+
+
+def _rc10_vtx_worker():
+    # Initial state requires a valid LOW sample before any HIGH edge.
+    armed_for_press = False
+    high_latched = False
+    low_count = 0
+    high_count = 0
+
+    while not _rc10_vtx_stop.wait(0.05):
+        with _lock:
+            latest = (
+                dict(_live_latest)
+                if isinstance(_live_latest, dict)
+                else None
+            )
+            age = time.time() - _live_last_wall
+
+        if latest is None or age > 0.5:
+            armed_for_press = False
+            low_count = 0
+            high_count = 0
+            continue
+
+        try:
+            pwm = int(latest.get("rc10_us", 0))
+        except (TypeError, ValueError):
+            pwm = 0
+
+        if not 800 <= pwm <= 2200:
+            armed_for_press = False
+            low_count = 0
+            high_count = 0
+            continue
+
+        if pwm <= 1500:
+            high_latched = False
+            high_count = 0
+            low_count += 1
+
+            if low_count >= 3:
+                armed_for_press = True
+
+        elif pwm >= 1700:
+            low_count = 0
+            high_count += 1
+
+            if not armed_for_press or high_latched:
+                continue
+
+            if high_count < 3:
+                continue
+
+            high_latched = True
+            armed_for_press = False
+
+            if latest.get("armed") is not False:
+                print("RC10 VTX: ignored (FC not DISARMED)", flush=True)
+                continue
+
+            try:
+                _rc10_change_vtx()
+            except Exception as exc:
+                print("RC10 VTX ERROR:", exc, flush=True)
+                log_event("WARN", "RC10 VTX: " + str(exc))
+
+        else:
+            low_count = 0
+            high_count = 0
+
+
+def start_rc10_vtx():
+    global _rc10_vtx_thread
+
+    if _rc10_vtx_thread and _rc10_vtx_thread.is_alive():
+        return
+
+    _rc10_vtx_stop.clear()
+    _rc10_vtx_thread = threading.Thread(
+        target=_rc10_vtx_worker,
+        name="jtzero-rc10-vtx",
+        daemon=True
+    )
+    _rc10_vtx_thread.start()
+    print("RC10 VTX: controller started", flush=True)
+
+
+def stop_rc10_vtx():
+    global _rc10_vtx_thread
+
+    _rc10_vtx_stop.set()
+
+    if _rc10_vtx_thread is not None:
+        _rc10_vtx_thread.join(timeout=22)
+
+    _rc10_vtx_thread = None
+
+# ===== END JTZERO_RC10_VTX_V1 =====
+
+
+# ===== JTZERO_RC11_VTX_POWER_V1 =====
+# RC11 wheel controls VTX power only; DISARMED only.
+# Tramp operations run outside the UDP telemetry thread.
+
+_RC11_POWER_RAW = (25, 100, 200, 400, 600)
+_RC11_BOUNDARIES = (1200, 1400, 1600, 1800)
+
+_rc11_vtx_stop = threading.Event()
+_rc11_vtx_thread = None
+
+
+def _rc11_zone(pwm):
+    return sum(pwm >= boundary for boundary in _RC11_BOUNDARIES)
+
+
+def _rc11_zone_hysteresis(pwm, previous):
+    if previous is not None:
+        low = 999 if previous == 0 else _RC11_BOUNDARIES[previous - 1]
+        high = 2000 if previous == 4 else _RC11_BOUNDARIES[previous] - 1
+
+        if low - 20 <= pwm <= high + 20:
+            return previous
+
+    return _rc11_zone(pwm)
+
+
+def _rc11_set_power(zone):
+    from vtx_web_bridge import set_power, _protocol
+    if _protocol() == "SMARTAUDIO":
+        # Only hardware-confirmed levels: 25mW and 500mW.
+        target = (14, 14, 27, 30, 34)[zone]
+
+        with _lock:
+            live = dict(_live_latest) if isinstance(_live_latest, dict) else {}
+            age = time.time() - _live_last_wall
+
+        if age > 0.5 or live.get("armed") is not False:
+            raise RuntimeError("RC11: FC armed or telemetry stale")
+
+        result = set_power(target)
+        after = result.get("after", {})
+
+        if after.get("current_power_dbm") != target:
+            raise RuntimeError("RC11: power readback mismatch")
+
+        print(f"RC11 SMARTAUDIO: {target} CONFIRMED", flush=True)
+        log_event("INFO", f"RC11 SMARTAUDIO POWER -> {target}")
+        return
+
+    target = _RC11_POWER_RAW[zone]
+
+    # The confirmed setter performs its own before/after UART reads.
+    # Avoid a redundant blocking Tramp snapshot here.
+    cached = load_json(
+        Path("/home/vio/jtzero_vtx_state.json"), {}
+    )
+    current = cached.get("power_setting_raw", "?")
+
+    if current == target:
+        print(f"RC11 VTX: raw={target} ALREADY SET", flush=True)
+        return
+
+    with _lock:
+        live = dict(_live_latest) if isinstance(_live_latest, dict) else {}
+        age = time.time() - _live_last_wall
+
+    if age > 0.5 or live.get("armed") is not False:
+        raise RuntimeError("RC11 VTX: FC armed or telemetry stale")
+
+    result = set_power(target)
+
+    after = result.get("after", {})
+    if (
+        not isinstance(after, dict)
+        or int(after.get("power_raw", -1)) != target
+    ):
+        raise RuntimeError("RC11 VTX: power not confirmed")
+
+    print(
+        f"RC11 VTX: raw {current} -> {target} CONFIRMED",
+        flush=True
+    )
+    log_event("INFO", f"RC11 VTX POWER -> {target}")
+
+
+def _rc11_vtx_worker():
+    # On startup, remember the wheel zone but do not change power.
+    # A deliberate movement to another zone is required.
+    selected = None
+    candidate = None
+    candidate_since = 0.0
+
+    while not _rc11_vtx_stop.wait(0.05):
+        with _lock:
+            live = (
+                dict(_live_latest)
+                if isinstance(_live_latest, dict)
+                else None
+            )
+            age = time.time() - _live_last_wall
+
+        if live is None or age > 0.5:
+            selected = None
+            candidate = None
+            continue
+
+        try:
+            pwm = int(live.get("rc11_us", 0))
+        except (TypeError, ValueError):
+            pwm = 0
+
+        # Zero denotes missing/stale RC11 from C++ runtime.
+        if not 900 <= pwm <= 2100:
+            selected = None
+            candidate = None
+            continue
+
+        zone = _rc11_zone_hysteresis(pwm, selected)
+
+        if zone == selected:
+            candidate = None
+            continue
+
+        now = time.monotonic()
+
+        if zone != candidate:
+            candidate = zone
+            candidate_since = now
+            continue
+
+        if now - candidate_since < 0.3:
+            continue
+
+        # Consume the new stable position exactly once.
+        # Do not repeat a failed command until the wheel changes zone.
+        selected = zone
+        candidate = None
+
+        if live.get("armed") is not False:
+            print("RC11 VTX: ignored (FC ARMED)", flush=True)
+            continue
+
+        # Initial stable wheel position does not trigger a command.
+        if not getattr(_rc11_vtx_worker, "_initialized", False):
+            _rc11_vtx_worker._initialized = True
+            print(f"RC11 VTX: initial zone={zone + 1}", flush=True)
+            continue
+
+        try:
+            _rc11_set_power(zone)
+        except Exception as exc:
+            print("RC11 VTX ERROR:", exc, flush=True)
+            log_event("WARN", "RC11 VTX: " + str(exc))
+
+
+def start_rc11_vtx():
+    global _rc11_vtx_thread
+
+    if _rc11_vtx_thread and _rc11_vtx_thread.is_alive():
+        return
+
+    _rc11_vtx_stop.clear()
+    _rc11_vtx_worker._initialized = False
+
+    _rc11_vtx_thread = threading.Thread(
+        target=_rc11_vtx_worker,
+        name="jtzero-rc11-vtx-power",
+        daemon=True
+    )
+    _rc11_vtx_thread.start()
+    print("RC11 VTX POWER: controller started", flush=True)
+
+
+def stop_rc11_vtx():
+    global _rc11_vtx_thread
+
+    _rc11_vtx_stop.set()
+
+    if _rc11_vtx_thread is not None:
+        _rc11_vtx_thread.join(timeout=22)
+
+    _rc11_vtx_thread = None
+
+# ===== END JTZERO_RC11_VTX_POWER_V1 =====
+
+# ===== JTZero VTX OSD supervisor =====
+# Separate from Tramp control. Sends confirmed telemetry only.
+import threading as _jt_vtx_threading
+
+_jt_vtx_proc = None
+_jt_vtx_thread = None
+_jt_vtx_stop = _jt_vtx_threading.Event()
+
+def _jt_vtx_spawn():
+    global _jt_vtx_proc
+
+    python = "/home/vio/mavlink-test-venv/bin/python"
+    sender = "/home/vio/jtzero_osd_sender_v2.py"
+    state = "/home/vio/jtzero_vtx_state.json"
+    logfile = "/home/vio/monkeysStab_runs/jtzero_osd_sender_web.log"
+
+    if not (os.path.isfile(python) and os.path.isfile(sender)):
+        print("VTX OSD: sender or Python missing", flush=True)
+        return
+
+    command = [
+        python, "-u", sender,
+        "--endpoint", "tcp:127.0.0.1:5760",
+        "--comp-ready", "0",
+        "--flow", "0",
+        "--vtx-state-file", state,
+        "--repeat",
+    ]
+
+    try:
+        with open(logfile, "a", buffering=1) as log:
+            _jt_vtx_proc = subprocess.Popen(
+                command,
+                stdin=subprocess.DEVNULL,
+                stdout=log,
+                stderr=subprocess.STDOUT,
+                start_new_session=True,
+            )
+        print(f"VTX OSD: STARTED PID={_jt_vtx_proc.pid}", flush=True)
+    except Exception as exc:
+        _jt_vtx_proc = None
+        print(f"VTX OSD: START ERROR: {exc}", flush=True)
+
+def _jt_vtx_supervisor():
+    global _jt_vtx_proc
+    while not _jt_vtx_stop.wait(2):
+        proc = _jt_vtx_proc
+        if proc is None or proc.poll() is not None:
+            if proc is not None:
+                print(f"VTX OSD: EXIT {proc.returncode}; restarting", flush=True)
+            if not _jt_vtx_stop.is_set():
+                _jt_vtx_spawn()
+
+def start_vtx_osd_sender():
+    global _jt_vtx_thread
+    if _jt_vtx_thread is not None and _jt_vtx_thread.is_alive():
+        return
+    _jt_vtx_stop.clear()
+    _jt_vtx_spawn()
+    _jt_vtx_thread = _jt_vtx_threading.Thread(
+        target=_jt_vtx_supervisor,
+        name="jtzero-vtx-osd-supervisor",
+        daemon=True,
+    )
+    _jt_vtx_thread.start()
+
+def stop_vtx_osd_sender():
+    global _jt_vtx_proc, _jt_vtx_thread
+    _jt_vtx_stop.set()
+    if _jt_vtx_thread is not None:
+        _jt_vtx_thread.join(timeout=3)
+    _jt_vtx_thread = None
+
+    proc = _jt_vtx_proc
+    _jt_vtx_proc = None
+    if proc is not None and proc.poll() is None:
+        proc.terminate()
+        try:
+            proc.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            proc.kill()
+            proc.wait()
+    print("VTX OSD: STOPPED", flush=True)
+
+# ===== End JTZero VTX OSD supervisor =====
+
 def _web_shutdown_signal(signum,frame):
     # SIGTERM must run the normal finally cleanup instead of orphaning the
     # router/blackbox/runtime child sessions.
@@ -2597,6 +3299,9 @@ if __name__=="__main__":
         finally:
             probe.close()
         ensure_router()
+        start_vtx_osd_sender()
+        start_rc10_vtx()
+        start_rc11_vtx()
         start_live_udp_listener()
         start_recovery_watchdog()
         start_statustext_monitor()
@@ -2632,4 +3337,11 @@ if __name__=="__main__":
         stop_statustext_monitor()
         stop_live_udp_listener()
         stop_fc_blackbox()
-        stop_router()
+        stop_rc11_vtx()
+        stop_rc10_vtx()
+        stop_vtx_osd_sender()
+        # MAVLink router is a shared FC transport, not a Web UI resource.
+        # It is launched in its own session by ensure_router(); leave it
+        # running across Web UI restarts so FC/MP/other clients stay online.
+        # stop_router() must only be used by explicit router maintenance.
+

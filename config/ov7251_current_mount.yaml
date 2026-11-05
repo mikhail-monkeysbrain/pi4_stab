@@ -1,0 +1,23 @@
+%YAML:1.0
+# OV7251 ChArUco calibration, 2026-11-01
+# Transferred from Betaflight runtime.
+# Camera image top -> forward; optical axis -> down.
+# Translation retained provisionally from old mount;
+# must be verified against current physical installation.
+
+camera_id: ov7251_current_mount
+
+T_BS:
+  cols: 4
+  rows: 4
+  data: [ 0.0, -1.0,  0.0,  0.0625,
+         -1.0,  0.0,  0.0,  0.0000,
+          0.0,  0.0, -1.0, -0.0500,
+          0.0,  0.0,  0.0,  1.0000 ]
+
+rate_hz: 60
+resolution: [640, 480]
+camera_model: pinhole
+intrinsics: [615.008145, 616.200754, 277.197977, 276.270723]
+distortion_model: radial-tangential
+distortion_coefficients: [-0.597585376, 0.263536183, -0.011099252, 0.025182752, -0.091036464]

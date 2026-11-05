@@ -218,6 +218,15 @@ ARGS=(
   --diag-camera-z-m "$CAMERA_Z_M"
   --diag-range-z-m "$RANGE_Z_M"
 )
+# JTZero synthetic rangefinder: explicit bench-only opt-in.
+if [[ "${MONKEYS_BENCH_TEST_ENABLE:-0}" == "1" && "${MONKEYS_ALLOW_SYNTHETIC_RANGE:-0}" == "1" ]]; then
+  if [[ "${MONKEYS_BENCH_HEIGHT_M:-}" != "1.0" ]]; then
+    echo "ERROR: bench test requires MONKEYS_BENCH_HEIGHT_M=1.0" >&2
+    exit 2
+  fi
+  echo "WARNING: SYNTHETIC RANGEFINDER 1.00 m - NO FLIGHT"
+  ARGS+=(--bench-height "1.0")
+fi
 if [[ "$LOCAL_GUI" == "1" || "$LOCAL_GUI" == "true" || "$LOCAL_GUI" == "yes" ]]; then
   ARGS+=(--rotation-gui)
 fi
