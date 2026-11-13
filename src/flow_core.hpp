@@ -180,7 +180,45 @@ FlowStep estimateRawFlow(const cv::Mat& prev,const cv::Mat& curr,double dt,const
   clock_gettime(CLOCK_THREAD_CPUTIME_ID,&lk_thr0);
   clock_gettime(CLOCK_PROCESS_CPUTIME_ID,&lk_proc0);
   const int64_t t_lk0=monoNs();
-  cv::calcOpticalFlowPyrLK(prev,curr,p0,p1,st,err,{21,21},3,
+
+  // LK_PHOTOMETRIC_V1
+  // Robust global brightness offset correction before forward LK.
+  // Leave the original frames, feature detector and geometry untouched.
+  cv::Mat lk_curr_normalized;
+  const cv::Mat* lk_curr = &curr;
+  if(prev.size() == curr.size() && prev.type() == CV_8UC1 &&
+     curr.type() == CV_8UC1) {
+    unsigned int hist[511] = {};
+    unsigned int total = 0;
+    for(int y=0; y<prev.rows; y+=8) {
+      const unsigned char* a = prev.ptr<unsigned char>(y);
+      const unsigned char* b = curr.ptr<unsigned char>(y);
+      for(int x=0; x<prev.cols; x+=8) {
+        ++hist[int(b[x])-int(a[x])+255];
+        ++total;
+      }
+    }
+    if(total) {
+      auto quantile = [&](unsigned int rank) {
+        unsigned int count=0;
+        for(int i=0;i<511;++i) {
+          count += hist[i];
+          if(count>=rank) return i-255;
+        }
+        return 0;
+      };
+      const int q25=quantile((total+3)/4);
+      const int q50=quantile((total+1)/2);
+      const int q75=quantile((3*total+3)/4);
+      if(std::abs(q50)>=3 && std::abs(q50)<=30 &&
+         q75-q25<=16) {
+        cv::subtract(curr,cv::Scalar(q50),lk_curr_normalized);
+        lk_curr=&lk_curr_normalized;
+      }
+    }
+  }
+
+cv::calcOpticalFlowPyrLK(prev,*lk_curr,p0,p1,st,err,{21,21},3,
                            cv::TermCriteria(cv::TermCriteria::COUNT|cv::TermCriteria::EPS,30,0.01),
                            0,1e-4);
   o.t_lk_ms=(monoNs()-t_lk0)*1e-6;
