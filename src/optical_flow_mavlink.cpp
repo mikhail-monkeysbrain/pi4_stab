@@ -1,3 +1,4 @@
+#include <cstdio>
 // OPENCV_PARALLEL_PROBE_V1 headers
 #include "../betaflight_adapter/bf_ipc_receiver.hpp"
 #include <mutex>
@@ -16,6 +17,7 @@
 #include "ardupilotmega/mavlink.h"
 
 #include "runtime.hpp"
+#include "virtual_rangefinder.hpp"
 #include "mavlink_io.hpp"
 #include "metric_odometry_shadow.hpp"
 #include "metric_shadow_sync.hpp"
@@ -340,6 +342,15 @@ struct FlowFcImu {
   bool valid=false;
 };
 
+// VIRTUAL_RANGEFINDER_BARO_V1
+struct FlowFcBaro {
+  double pressure_hpa=0.0;
+  double altitude_m=0.0;
+  double temperature_c=0.0;
+  int64_t recv_ns=0;
+  bool valid=false;
+};
+
 struct FlowFcRawGyro {
   double x=0,y=0,z=0;           // HIGHRES_IMU gyro, body FRD rad/s
   double drift_x=0,drift_y=0,drift_z=0; // AHRS omegaI sampled at receive time
@@ -383,6 +394,7 @@ struct FlowFc {
   FlowEkfStatus ekf{};
   FlowFcGyro gyro{};
   FlowFcImu imu{};
+  FlowFcBaro baro{};
   imu_dr::State imu_dr_state{};
 
   // Camera velocity-constraint shadow.
@@ -1067,6 +1079,19 @@ struct FlowFc {
               imu.gx=q.xgyro; imu.gy=q.ygyro; imu.gz=q.zgyro;
               imu.time_usec=q.time_usec; imu.recv_ns=monoNs(); imu.valid=true; ++imu_count;
 
+              // VIRTUAL_RANGEFINDER_BARO_V1
+              // Receive-only diagnostic barometer.
+              if((q.fields_updated & (1u << 11)) != 0u){
+                baro.pressure_hpa=q.abs_pressure;
+                baro.altitude_m=q.pressure_alt;
+                baro.temperature_c=q.temperature;
+                baro.recv_ns=imu.recv_ns;
+                baro.valid=
+                  std::isfinite(baro.altitude_m) &&
+                  std::isfinite(baro.pressure_hpa) &&
+                  baro.pressure_hpa>0.0;
+              }
+
               // HIGHRES_GYRO_SHADOW_V1: independent raw gyro capture.
               // This does not use ATTITUDE.rollspeed/pitchspeed/yawspeed and
               // does not feed any production estimator or MAVLink output.
@@ -1378,6 +1403,15 @@ struct FlowFc {
     return true;
   }
 
+  bool latestBaro(FlowFcBaro* out,double* age_ms=nullptr){
+    std::lock_guard<std::mutex> l(mu);
+    *out=baro;
+    if(age_ms)
+      *age_ms=baro.recv_ns>0
+        ? (monoNs()-baro.recv_ns)*1e-6 : 1e9;
+    return baro.valid;
+  }
+
   bool latestRc(FlowFcRc* out,double* age_ms=nullptr){
     std::lock_guard<std::mutex> l(mu);
     if(!rc.valid)return false;
@@ -1452,6 +1486,64 @@ bool sendFlowOsd(int fd, float quality){
     42,191,&msg,
     static_cast<uint32_t>(monoNs()/1000000ULL),
     name,quality);
+
+  return GroundMotionMavlinkPublisher::writeMessage(fd,msg);
+}
+
+// JTZERO_VRF_OSD_V1
+bool sendRangefinderOsd(
+    int fd,
+    uint32_t session,
+    uint32_t sequence,
+    int mode,
+    double height_m,
+    bool valid)
+{
+  if(fd<0 || session==0)return false;
+
+  const char* label=
+    mode==1?"RF":
+    mode==2?"AUTO":
+    mode==3?"BARO":"RC6 ERR";
+
+  char text[17]{};
+
+  if(mode==0){
+    std::snprintf(text,sizeof(text),"%s",label);
+  } else if(valid && std::isfinite(height_m) &&
+            height_m>=0.0 && height_m<=99999.9){
+    std::snprintf(
+      text,sizeof(text),"%s %.1fm",label,height_m);
+  } else {
+    std::snprintf(
+      text,sizeof(text),"%s --.-m",label);
+  }
+
+  uint8_t data[96]{};
+
+  data[0]='J';
+  data[1]='T';
+  data[2]=1;
+  data[3]=3;
+
+  for(unsigned i=0;i<4;++i){
+    data[4+i]=uint8_t(session>>(8*i));
+    data[8+i]=uint8_t(sequence>>(8*i));
+  }
+
+  uint8_t len=0;
+
+  while(len<16 && text[len]!='\0'){
+    data[13+len]=uint8_t(text[len]);
+    ++len;
+  }
+
+  data[12]=len;
+
+  mavlink_message_t msg{};
+
+  mavlink_msg_data96_pack(
+    42,191,&msg,77,29,data);
 
   return GroundMotionMavlinkPublisher::writeMessage(fd,msg);
 }
@@ -1703,6 +1795,52 @@ int main(int argc,char** argv){
     csv<<"mono_ns,camera_ts_ns,v4l2_timestamp_ns,camera_dequeue_ns,v4l2_flags,v4l2_to_dequeue_ms,camera_poll_enter_ns,camera_poll_exit_ns,camera_poll_ms,camera_dq_enter_ns,camera_dq_exit_ns,camera_dq_ioctl_ms,camera_dq_batch_ms,camera_dq_count,loop_tail_to_poll_ms,prev_send_to_csv_ms,prev_csv_block_ms,prev_csv_helpers_ms,prev_csv_stream_ms,prev_csv_flush_ms,prev_csv_tellp_ms,prev_csv_limit_ms,prev_web_block_ms,prev_postweb_ms,prev_anchor_ms,flow_send_ns,frame_pipeline_latency_ms,camera_queue_dropped,camera_queue_dropped_total,frame,guide_leg,guide_stage,valid,invalid_reason,bridge_pending,dt_s,features,tracked,inliers,inlier_ratio,t_features_ms,t_lk_ms,t_ransac_ms,t_post_ms,du_px,dv_px,du_norm,dv_norm,yaw_rate_cam_z,scale_rate,lk_height_scale,flow_cam_x,flow_cam_y,flow_body_x,flow_body_y,lever_valid,lever_production_applied,lever_flow_body_x,lever_flow_body_y,lever_pred_flow_x,lever_pred_flow_y,ab_fb_enabled,ab_fb_max_px,ab_fb_checked,ab_fb_pass,ab_fb_ratio,ab_fb_inliers,ab_fb_valid,ab_fb_flow_body_x,ab_fb_flow_body_y,ab_fb_t_ms,ab_robust_valid,ab_robust_flow_body_x,ab_robust_flow_body_y,ab_robust_sigma,ab_robust_mean_weight,ab_robust_downweighted,ab_robust_iters,ab_obs_valid,ab_obs_flow_body_x,ab_obs_flow_body_y,ab_obs_median_ratio,ab_obs_mean_weight,ab_obs_downweighted,quality,luna_m,luna_age_ms,range_to_fc_m,flow_send_x,flow_send_y,flow_sent,flow_tx_x,flow_tx_y,flow_tx_dt_s,flow_tx_inputs,raw_publish_mode,causal35_translation_valid,causal35_translation_x,causal35_translation_y,causal35_raw_gyro_x,causal35_raw_gyro_y,causal35_raw_valid,causal35_raw_x,causal35_raw_y,causal35_optical_depth_m,causal35_reject_reason,causal35_anchor_recv_age_ms,causal35_anchor_sample_age_ms,causal35_deltar_hold_ms,stabilised_publish_mode,stabilised_publish_ready,stabilised_publish_source,range_sent,fc_armed,heartbeat_valid,heartbeat_age_ms,fc_custom_mode,fc_base_mode,fc_system_status,ekf_local_valid,ekf_x_ned,ekf_y_ned,ekf_z_ned,ekf_vx_ned,ekf_vy_ned,ekf_vz_ned,ekf_age_ms,ekf_count,ekf_status_valid,ekf_flags,ekf_status_age_ms,ekf_status_count,ekf_vel_var,ekf_pos_h_var,ekf_pos_v_var,ekf_compass_var,ekf_terrain_var,return_event,rc_zero_seq,rc_valid,rc_age_ms,rc1_us,rc2_us,rc3_us,rc4_us,rc5_us,rc6_us,rc7_us,rc8_us,rc9_us,rc10_us,rc11_us,rc12_us,rc13_us,rc14_us,rc15_us,rc16_us,rc17_us,rc18_us,worked5_valid,worked5_points,worked5_hcam_m,worked5_du_norm,worked5_dv_norm,worked5_dx_m,worked5_dy_m,worked5_dN_m,worked5_dE_m,worked5_acc_n_m,worked5_acc_e_m,highdyn_active,highdyn_reason6,highdyn_raw_dx_m,highdyn_raw_dy_m,highdyn_raw_dN_m,highdyn_raw_dE_m,highdyn_acc_n_m,highdyn_acc_e_m,highdyn_confidence,fc_roll,fc_pitch,fc_yaw,fc_gyro_x,fc_gyro_y,fc_gyro_z,fc_gyro_age_ms,fc_gyro_samples,ctrl_target_valid,ctrl_target_x,ctrl_target_y,ctrl_target_vx,ctrl_target_vy,ctrl_target_age_ms,att_target_valid,att_target_roll,att_target_pitch,att_target_yaw,att_target_thrust,att_target_age_ms,outputs_valid,out1,out2,out3,out4,out5,out6,out7,out8,outputs_age_ms,c0_n,c0_bx,c0_by,c1_n,c1_bx,c1_by,c2_n,c2_bx,c2_by,c3_n,c3_bx,c3_by,c4_n,c4_bx,c4_by,c5_n,c5_bx,c5_by,c6_n,c6_bx,c6_by,c7_n,c7_bx,c7_by,c8_n,c8_bx,c8_by\n";
     csv.flush();
     AsyncCsvWriter csv_writer(csv);
+
+    // VIRTUAL_RANGEFINDER_SHADOW_V1
+    virtual_rangefinder::State vrf;
+    virtual_rangefinder::State vrf_anchor;
+
+    int vrf_source=0;
+    int vrf_last_mode=0;
+    uint64_t vrf_switch_count=0;
+    int64_t vrf_anchor_ns=0;
+    int64_t vrf_log_ns=0;
+
+    // JTZERO_VRF_OSD_V1
+    int64_t vrf_osd_ns=0;
+    uint32_t vrf_osd_sequence=0;
+
+    const uint64_t vrf_session_seed=
+      static_cast<uint64_t>(monoNs()) ^
+      (static_cast<uint64_t>(::getpid())<<32);
+
+    const uint32_t vrf_session_hash=
+      static_cast<uint32_t>(
+        vrf_session_seed ^
+        (vrf_session_seed>>32));
+
+    const uint32_t vrf_osd_session=
+      vrf_session_hash!=0?vrf_session_hash:1U;
+
+    std::ofstream vrf_csv(
+      std::filesystem::path(csvpath).parent_path()/
+      "virtual_rangefinder_shadow.csv",
+      std::ios::trunc);
+
+    std::unique_ptr<AsyncCsvWriter> vrf_writer;
+
+    if(vrf_csv){
+      vrf_csv
+        <<"mono_ns,rc6_pwm,rc6_valid,height_mode,height_source,"
+        <<"pressure_hpa,baro_raw_m,baro_age_ms,baro_valid,"
+        <<"lidar_m,lidar_last_valid_m,lidar_age_ms,"
+        <<"lidar_strength,lidar_valid,baro_offset_m,"
+        <<"baro_virtual_m,offset_valid,height_selected_m,"
+        <<"height_switch_count,anchor_age_ms,log_dropped"
+        <<"\n";
+      vrf_csv.flush();
+      vrf_writer=std::make_unique<AsyncCsvWriter>(vrf_csv);
+    }
 
     if(g_fb_shadow_max_px>0.0){
       std::cerr<<(g_obs_shadow_enabled?"A/B/C/D SHADOW: ":"A/B/C SHADOW: ")
@@ -2405,6 +2543,137 @@ int main(int argc,char** argv){
         if(luna_live){
           last_valid_luna_m=lm;
           have_last_valid_luna=true;
+        }
+
+        // VIRTUAL_RANGEFINDER_SHADOW_V1
+        // Diagnostic only. Never feeds production or MAVLink.
+        {
+          FlowFcBaro vb{};
+          FlowFcRc vr{};
+
+          double ba=1e9, ra=1e9;
+
+          const bool bv=fc.latestBaro(&vb,&ba)
+            && ba>=0.0 && ba<500.0;
+
+          const bool rc_ok=fc.latestRc(&vr,&ra)
+            && ra>=0.0 && ra<500.0
+            && vr.pwm[5]>=900 && vr.pwm[5]<=2100;
+
+          const int pwm=vr.pwm[5];
+
+          // Mode: 0=invalid, 1=LIDAR, 2=AUTO, 3=BARO.
+          const int mode=!rc_ok?0:
+            (pwm<=1300?1:(pwm<1700?2:3));
+
+          if(rc_ok)
+            vrf_last_mode=mode;
+
+          const int effective_mode=
+            rc_ok?mode:vrf_last_mode;
+
+          const int64_t vn=monoNs();
+
+          vrf.updateBaro(vb.altitude_m,bv);
+
+          // Keep the most recent time-aligned sensor pair.
+          if(luna_live && bv &&
+             std::abs(vb.recv_ns-lns)<=150000000LL){
+            vrf_anchor.updateBaro(vb.altitude_m,true);
+            if(vrf_anchor.synchronize(lm,true))
+              vrf_anchor_ns=
+                std::min(vb.recv_ns,lns);
+          }
+
+          int desired=0;
+
+          if(effective_mode==1)
+            desired=luna_live?1:0;
+          else if(effective_mode==2)
+            desired=luna_live?1:2;
+          else if(effective_mode==3)
+            desired=2;
+
+          // Recalculate offset only on entry into BARO.
+          if(desired==2 &&
+             (vrf_source!=2 || !vrf.offset_valid)){
+            vrf.invalidateAnchor();
+
+            if(luna_live && bv &&
+               std::abs(vb.recv_ns-lns)<=150000000LL){
+              vrf.synchronize(lm,true);
+            } else if(bv && vrf_anchor.offset_valid &&
+                      vrf_anchor_ns>0 &&
+                      vn-vrf_anchor_ns<=1000000000LL){
+              vrf=vrf_anchor;
+              vrf.updateBaro(vb.altitude_m,bv);
+            }
+          }
+
+          if(desired!=vrf_source){
+            ++vrf_switch_count;
+            vrf_source=desired;
+          }
+
+          const bool selected_valid=
+            (vrf_source==1 && luna_live) ||
+            (vrf_source==2 && vrf.virtual_valid);
+
+          const double selected_m=
+            !selected_valid?
+              virtual_rangefinder::invalidHeight():
+              (vrf_source==1?lm:vrf.baro_virtual_m);
+
+          const char* mode_name=
+            mode==1?"LIDAR":
+            mode==2?"AUTO":
+            mode==3?"BARO":"INVALID";
+
+          const char* source_name=
+            !selected_valid?"INVALID":
+            vrf_source==1?"LIDAR":"BARO";
+
+          // JTZERO_VRF_OSD_V1
+          if(vn-vrf_osd_ns>=200000000LL){
+            vrf_osd_ns=vn;
+
+            sendRangefinderOsd(
+              fc.fd,
+              vrf_osd_session,
+              ++vrf_osd_sequence,
+              mode,
+              selected_m,
+              selected_valid);
+          }
+
+          if(vrf_writer &&
+             vn-vrf_log_ns>=50000000LL &&
+             vrf_writer->bytes()<64ULL*1024ULL*1024ULL){
+
+            vrf_log_ns=vn;
+
+            std::ostringstream row;
+            row<<std::setprecision(10)
+               <<vn<<','<<pwm<<','<<rc_ok<<','
+               <<mode_name<<','<<source_name<<','
+               <<vb.pressure_hpa<<','
+               <<vrf.baro_raw_m<<','<<ba<<','<<bv<<','
+               <<lm<<','
+               <<(have_last_valid_luna?
+                  last_valid_luna_m:
+                  virtual_rangefinder::invalidHeight())<<','
+               <<lage<<','<<strength<<','<<luna_live<<','
+               <<vrf.baro_offset_m<<','
+               <<vrf.baro_virtual_m<<','
+               <<vrf.offset_valid<<','
+               <<selected_m<<','<<vrf_switch_count<<','
+               <<(vrf_anchor_ns>0?
+                  (vn-vrf_anchor_ns)*1e-6:-1.0)<<','
+               <<vrf_writer->dropped()<<'\n';
+
+            vrf_writer->tryEnqueue(row.str());
+            vrf_writer->requestFlush();
+          }
         }
 
         const bool range_available =
