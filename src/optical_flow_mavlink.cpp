@@ -2545,8 +2545,12 @@ int main(int argc,char** argv){
           have_last_valid_luna=true;
         }
 
+        // BARO_HEIGHT_V1: height chosen by the VRF block (RC6 BARO / AUTO failover)
+        // replaces TF-Luna in the FC range message and in camera height.
+        double vrf_height_m=virtual_rangefinder::invalidHeight();
+        bool vrf_height_baro=false;
+
         // VIRTUAL_RANGEFINDER_SHADOW_V1
-        // Diagnostic only. Never feeds production or MAVLink.
         {
           FlowFcBaro vb{};
           FlowFcRc vr{};
@@ -2624,6 +2628,9 @@ int main(int argc,char** argv){
               virtual_rangefinder::invalidHeight():
               (vrf_source==1?lm:vrf.baro_virtual_m);
 
+          vrf_height_m=selected_m;
+          vrf_height_baro=selected_valid && vrf_source==2;
+
           const char* mode_name=
             mode==1?"LIDAR":
             mode==2?"AUTO":
@@ -2676,13 +2683,17 @@ int main(int argc,char** argv){
           }
         }
 
+        const bool use_baro_h =
+          bench_height_override<=0.0 && vrf_height_baro &&
+          std::isfinite(vrf_height_m) && vrf_height_m>=0.03;
+
         const bool range_available =
-          bench_height_override>0.0 || have_last_valid_luna;
+          bench_height_override>0.0 || have_last_valid_luna || use_baro_h;
 
         const double published_range_m =
           bench_height_override>0.0
             ? bench_height_override
-            : last_valid_luna_m;
+            : (use_baro_h ? vrf_height_m : last_valid_luna_m);
 
         if(range_available &&
            (last_range_send_ns==0 ||
@@ -2693,14 +2704,15 @@ int main(int argc,char** argv){
           if(range_sent)++range_sent_total;
         }
 
+        const double h_src_m = use_baro_h ? vrf_height_m : lm;
         double current_camera_height_m=0.0;
-        bool current_camera_height_valid=hl && lage<100.0 && lm>=0.03;
+        bool current_camera_height_valid=use_baro_h || (hl && lage<100.0 && lm>=0.03);
         if(current_camera_height_valid){
-          current_camera_height_m=lm;
+          current_camera_height_m=h_src_m;
           // Convert rangefinder optical origin to camera optical origin using
           // the already audited current-mount Z offsets.
           if(std::isfinite(diag_camera_z_m) && std::isfinite(diag_range_z_m)){
-            current_camera_height_m=lm-(diag_camera_z_m-diag_range_z_m);
+            current_camera_height_m=h_src_m-(diag_camera_z_m-diag_range_z_m);
           }
           if(!(current_camera_height_m>=0.03 && std::isfinite(current_camera_height_m)))
             current_camera_height_valid=false;
