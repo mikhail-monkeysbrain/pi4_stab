@@ -1,3 +1,5 @@
+#include <string>
+#include <cstdlib>
 #pragma once
 #include "runtime.hpp"
 #include <array>
@@ -74,8 +76,8 @@ struct FlowStep {
 FlowStep estimateRawFlow(const cv::Mat& prev,const cv::Mat& curr,double dt,const CameraCalib& calib,
                          double prev_camera_height_m=0.0,double curr_camera_height_m=0.0,
                          const cv::Matx33d* C1_R_C0=nullptr,double dr_interp_gap_ms=-1.0){
-  // OPENCV_PARALLEL_PROBE_V1 -- one-shot diagnostic from the production flow thread.
-  {
+  // OPENCV_PARALLEL_PROBE_V1 -- optional diagnostic.
+  if(const char* e=std::getenv("MONKEYS_OPENCV_PROBE"); e && std::string(e)=="1"){
     static std::once_flag jtzero_parallel_probe_once;
     std::call_once(jtzero_parallel_probe_once, [] {
       std::mutex mu;
@@ -121,6 +123,72 @@ FlowStep estimateRawFlow(const cv::Mat& prev,const cv::Mat& curr,double dt,const
   constexpr int kFeatureGrid=3;
   const int per_cell=std::max(1,(g_max_features+kFeatureGrid*kFeatureGrid-1)/
                                 (kFeatureGrid*kFeatureGrid));
+
+  // JTZERO_PARALLEL_GFTT_V1
+  static const bool parallel_gftt = []{
+    const char* e=std::getenv("MONKEYS_PARALLEL_GFTT");
+    return !e || std::string(e)!="0";
+  }();
+
+  static const bool verify_gftt = []{
+    const char* e=std::getenv("MONKEYS_GFTT_VERIFY");
+    return e && std::string(e)=="1";
+  }();
+
+  auto detect_parallel = [&](){
+    constexpr int cells=kFeatureGrid*kFeatureGrid;
+    std::array<std::vector<cv::Point2f>,cells> results;
+
+    cv::parallel_for_(cv::Range(0,cells),
+      [&](const cv::Range& range){
+        for(int i=range.start;i<range.end;i++){
+          const int gy=i/kFeatureGrid;
+          const int gx=i%kFeatureGrid;
+
+          const int cy0=y0+(y1-y0)*gy/kFeatureGrid;
+          const int cy1=y0+(y1-y0)*(gy+1)/kFeatureGrid;
+          const int cx0=x0+(x1-x0)*gx/kFeatureGrid;
+          const int cx1=x0+(x1-x0)*(gx+1)/kFeatureGrid;
+
+          if(cx1<=cx0 || cy1<=cy0) continue;
+
+          const cv::Rect cell(cx0,cy0,cx1-cx0,cy1-cy0);
+
+          cv::goodFeaturesToTrack(
+            prev(cell),results[i],per_cell,0.01,7);
+
+          for(auto& p:results[i]){
+            p.x+=(float)cell.x;
+            p.y+=(float)cell.y;
+          }
+        }
+      },cells);
+
+    std::vector<cv::Point2f> out;
+    out.reserve(g_max_features);
+
+    for(const auto& local:results){
+      for(const auto& p:local){
+        if((int)out.size()>=g_max_features) break;
+        out.push_back(p);
+      }
+      if((int)out.size()>=g_max_features) break;
+    }
+
+    return out;
+  };
+
+  if(parallel_gftt){
+    p0=detect_parallel();
+  }
+
+  if(!parallel_gftt || verify_gftt){
+    std::vector<cv::Point2f> parallel_result;
+
+    if(parallel_gftt){
+      parallel_result.swap(p0);
+    }
+
   p0.reserve(g_max_features);
   for(int gy=0;gy<kFeatureGrid;gy++){
     const int cy0=y0+(y1-y0)*gy/kFeatureGrid;
@@ -142,6 +210,40 @@ FlowStep estimateRawFlow(const cv::Mat& prev,const cv::Mat& curr,double dt,const
       if((int)p0.size()>=g_max_features) break;
     }
     if((int)p0.size()>=g_max_features) break;
+  }
+
+
+
+    if(parallel_gftt && verify_gftt){
+      static uint64_t checked=0;
+      static uint64_t mismatches=0;
+
+      ++checked;
+
+      bool equal=p0.size()==parallel_result.size();
+
+      if(equal){
+        for(size_t i=0;i<p0.size();i++){
+          if(p0[i].x!=parallel_result[i].x ||
+             p0[i].y!=parallel_result[i].y){
+            equal=false;
+            break;
+          }
+        }
+      }
+
+      if(!equal) ++mismatches;
+
+      if(checked==1 || checked%100==0 || !equal){
+        std::cerr<<"JTZERO_GFTT_VERIFY"
+                 <<" checked="<<checked
+                 <<" mismatches="<<mismatches
+                 <<" equal="<<(equal?1:0)
+                 <<"\n";
+      }
+
+      if(equal) p0.swap(parallel_result);
+    }
   }
 
   // If the normal ROI becomes texture-starved (typical when crossing a sharp

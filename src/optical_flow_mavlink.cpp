@@ -1426,6 +1426,18 @@ bool sendOpticalFlow(int fd,uint64_t time_usec,float rate_x,float rate_y,uint8_t
   return GroundMotionMavlinkPublisher::writeMessage(fd,msg);
 }
 
+// JTZERO_COMP_READY_V1
+bool sendCompReady(int fd){
+  if(fd<0)return false;
+  mavlink_message_t msg{};
+  const char name[10] = "JT_COMP";
+  mavlink_msg_named_value_float_pack(
+    42,191,&msg,
+    static_cast<uint32_t>(monoNs()/1000000ULL),
+    name,1.0f);
+  return GroundMotionMavlinkPublisher::writeMessage(fd,msg);
+}
+
 bool sendHealthRadioStatus(int fd){
   if(fd<0)return false;
   mavlink_message_t msg{};
@@ -2341,7 +2353,7 @@ int main(int argc,char** argv){
           hl=true;
         }
 
-        const double lage=hl?(now-lns)*1e-6:1e9;
+        const double lage=hl?(monoNs()-lns)*1e-6:1e9;
         bool range_sent=false;
         const double range_to_fc=(bench_height_override>0.0)?bench_height_override:lm;
 
@@ -3993,6 +4005,7 @@ int main(int argc,char** argv){
              (last_osd_rssi_send_ns==0 ||
               osd_now_ns-last_osd_rssi_send_ns>=kOsdRssiPeriodNs)){
             if(sendHealthRadioStatus(fc.fd)){
+              sendCompReady(fc.fd);
               last_osd_rssi_send_ns=osd_now_ns;
             }
           }

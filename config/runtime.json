@@ -6,7 +6,7 @@
     1.0,
     1.0
   ],
-  "max_features": 500,
+  "max_features": 250,
   "local_gui": true,
   "visualization_mode": "simple"
 }

@@ -24,6 +24,7 @@
 #include <mutex>
 #include <stdexcept>
 #include <string>
+#include <iostream>
 #include <thread>
 #include <vector>
 
