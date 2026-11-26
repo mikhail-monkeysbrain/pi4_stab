@@ -1438,6 +1438,24 @@ bool sendCompReady(int fd){
   return GroundMotionMavlinkPublisher::writeMessage(fd,msg);
 }
 
+// JTZERO_FLOW_OSD_V1
+bool sendFlowOsd(int fd, float quality){
+  if(fd<0)return false;
+  if(!std::isfinite(quality))quality=0.0f;
+  if(quality<0.0f)quality=0.0f;
+  if(quality>100.0f)quality=100.0f;
+
+  mavlink_message_t msg{};
+  const char name[10] = "JT_FLOW";
+
+  mavlink_msg_named_value_float_pack(
+    42,191,&msg,
+    static_cast<uint32_t>(monoNs()/1000000ULL),
+    name,quality);
+
+  return GroundMotionMavlinkPublisher::writeMessage(fd,msg);
+}
+
 bool sendHealthRadioStatus(int fd){
   if(fd<0)return false;
   mavlink_message_t msg{};
@@ -4006,6 +4024,8 @@ int main(int argc,char** argv){
               osd_now_ns-last_osd_rssi_send_ns>=kOsdRssiPeriodNs)){
             if(sendHealthRadioStatus(fc.fd)){
               sendCompReady(fc.fd);
+              sendFlowOsd(fc.fd,
+                s.valid ? static_cast<float>(s.inlier_ratio * 100.0) : 0.0f);
               last_osd_rssi_send_ns=osd_now_ns;
             }
           }
