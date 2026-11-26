@@ -2509,9 +2509,9 @@ int main(int argc,char** argv){
           hl=true;
         }
 
-        const double lage=hl?(monoNs()-lns)*1e-6:1e9;
+        double lage=hl?(monoNs()-lns)*1e-6:1e9;
         bool range_sent=false;
-        const double range_to_fc=(bench_height_override>0.0)?bench_height_override:lm;
+        double range_to_fc=(bench_height_override>0.0)?bench_height_override:lm;
 
         // A downward rangefinder can jump from table to floor (or back) while the
         // vehicle itself has not moved vertically. During that short transition
@@ -2681,6 +2681,19 @@ int main(int argc,char** argv){
             vrf_writer->tryEnqueue(row.str());
             vrf_writer->requestFlush();
           }
+        }
+
+        // BARO_AS_LUNA_V1: from here on every consumer of lm/hl/lage/range_to_fc
+        // sees the virtual (barometric) height exactly as if TF-Luna reported it.
+        // The real TF-Luna value stays available in virtual_rangefinder_shadow.csv.
+        if(bench_height_override<=0.0 && vrf_height_baro &&
+           std::isfinite(vrf_height_m) && vrf_height_m>=0.03){
+          lm=vrf_height_m;
+          strength=255;
+          lns=now;
+          hl=true;
+          lage=0.0;
+          range_to_fc=vrf_height_m;
         }
 
         const bool use_baro_h =
