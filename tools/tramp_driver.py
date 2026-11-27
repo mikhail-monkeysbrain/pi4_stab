@@ -2,8 +2,8 @@
 """
 Foxeer IRC Tramp one-wire read driver.
 
-GPIO12 -> UART5 TX / GPIO input RX
-Uses the existing tramp_gpiomem binary.
+PI5 -> UART2 TX / MMAP GPIO input RX
+Uses the Orange Pi Tramp V4 binary.
 Does not modify the optical-flow pipeline.
 """
 
@@ -18,7 +18,7 @@ import time
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent
-BINARY = Path("/usr/local/sbin/monkeysstab-tramp-gpiomem")
+BINARY = Path("/usr/local/sbin/monkeysstab-tramp-orangepi")
 LOCKFILE = "/tmp/monkeysstab_tramp_uart5.lock"
 
 COMMANDS = {"r", "v", "s"}
@@ -115,7 +115,7 @@ def read(command, attempts=3):
                 return {
                     "ok": True,
                     "protocol": "IRC_TRAMP",
-                    "transport": "GPIO12_ONEWIRE",
+                    "transport": "PI5_UART2_ONEWIRE",
                     "command": command,
                     "attempt": attempt,
                     "raw_hex": frame.hex(" ").upper(),

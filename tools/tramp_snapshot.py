@@ -25,7 +25,7 @@ def main():
     output = {
         "ok": len(valid) == 3,
         "protocol": "IRC_TRAMP",
-        "transport": "GPIO12_ONEWIRE",
+        "transport": "PI5_UART2_ONEWIRE",
         "frequency_mhz": valid.get("v", {}).get("frequency_mhz"),
         "power_setting_raw": valid.get("v", {}).get("power_setting_raw"),
         "power_field_8_raw": valid.get("v", {}).get("field_8_raw"),

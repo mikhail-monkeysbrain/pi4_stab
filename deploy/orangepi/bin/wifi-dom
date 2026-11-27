@@ -1,0 +1,10 @@
+#!/bin/bash
+set -e
+
+sudo systemd-run --collect --unit=wifi-switch-dom \
+  /bin/bash -c '
+    if nmcli --wait 30 connection up uuid bc71af90-d6be-4931-8653-71ff565829f6 ifname wlan0; then
+        exit 0
+    fi
+    nmcli --wait 30 connection up uuid 966e95c9-a2b8-4105-8a14-ed87a8f70f0d ifname wlan0
+  '

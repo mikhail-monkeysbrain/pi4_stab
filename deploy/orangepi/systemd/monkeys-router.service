@@ -1,0 +1,16 @@
+[Unit]
+Description=MonkeysStab MAVLink Router
+After=network.target
+StartLimitIntervalSec=0
+
+[Service]
+Type=simple
+User=vio
+Environment=HOME=/home/vio
+WorkingDirectory=/home/vio/monkeysStab_orangepi
+ExecStart=/bin/bash -c 'source /home/vio/monkeys_orangepi.env && exec bash scripts/run_mavlink_wifi.sh'
+Restart=always
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target

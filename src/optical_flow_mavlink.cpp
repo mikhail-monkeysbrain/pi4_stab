@@ -1798,7 +1798,9 @@ int main(int argc,char** argv){
 
     // VIRTUAL_RANGEFINDER_SHADOW_V1
     virtual_rangefinder::State vrf;
-    virtual_rangefinder::State vrf_anchor;
+    bool vrf_arm_known=false;
+    bool vrf_prev_armed=false;
+    bool vrf_arm_pending=false;
 
     int vrf_source=0;
     int vrf_last_mode=0;
@@ -2580,13 +2582,42 @@ int main(int argc,char** argv){
 
           vrf.updateBaro(vb.altitude_m,bv);
 
-          // Keep the most recent time-aligned sensor pair.
-          if(luna_live && bv &&
-             std::abs(vb.recv_ns-lns)<=150000000LL){
-            vrf_anchor.updateBaro(vb.altitude_m,true);
-            if(vrf_anchor.synchronize(lm,true))
-              vrf_anchor_ns=
-                std::min(vb.recv_ns,lns);
+          // BARO_ARM_ZERO_V1: fixed 150 mm reference at ARM.
+          bool vrf_armed=false;
+          double vrf_arm_age_ms=1e9;
+
+          const bool vrf_arm_valid=
+            fc.latestArm(&vrf_armed,&vrf_arm_age_ms) &&
+            vrf_arm_age_ms>=0.0 &&
+            vrf_arm_age_ms<2000.0;
+
+          if(vrf_arm_valid){
+            if(!vrf_arm_known){
+              vrf_arm_known=true;
+              vrf_prev_armed=vrf_armed;
+              if(!vrf_armed)
+                vrf_arm_pending=true;
+            } else if(vrf_armed!=vrf_prev_armed){
+              vrf_prev_armed=vrf_armed;
+
+              if(vrf_armed){
+                vrf.invalidateAnchor();
+                vrf_arm_pending=true;
+              } else {
+                vrf_arm_pending=false;
+              }
+            }
+
+            if(vrf_arm_pending && bv){
+              if(vrf.synchronize(0.15,true)){
+                vrf_anchor_ns=vb.recv_ns;
+                vrf_arm_pending=false;
+                std::cerr<<"BARO_ARM_ZERO: height=0.15 m"
+                         <<" raw="<<vb.altitude_m
+                         <<" offset="<<vrf.baro_offset_m
+                         <<"\\n";
+              }
+            }
           }
 
           int desired=0;
@@ -2598,21 +2629,8 @@ int main(int argc,char** argv){
           else if(effective_mode==3)
             desired=2;
 
-          // Recalculate offset only on entry into BARO.
-          if(desired==2 &&
-             (vrf_source!=2 || !vrf.offset_valid)){
-            vrf.invalidateAnchor();
-
-            if(luna_live && bv &&
-               std::abs(vb.recv_ns-lns)<=150000000LL){
-              vrf.synchronize(lm,true);
-            } else if(bv && vrf_anchor.offset_valid &&
-                      vrf_anchor_ns>0 &&
-                      vn-vrf_anchor_ns<=1000000000LL){
-              vrf=vrf_anchor;
-              vrf.updateBaro(vb.altitude_m,bv);
-            }
-          }
+          // RC6 changes the source only.
+          // Barometric reference is preserved until the next ARM.
 
           if(desired!=vrf_source){
             ++vrf_switch_count;

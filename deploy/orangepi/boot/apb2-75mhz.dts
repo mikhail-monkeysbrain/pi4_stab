@@ -1,0 +1,17 @@
+/dts-v1/;
+
+/ {
+
+	fragment@0 {
+		target-path = "/soc/clock@3001000";
+
+		__overlay__ {
+			assigned-clocks = <0xffffffff 0x1b>;
+			assigned-clock-rates = <0x47868c0>;
+		};
+	};
+
+	__fixups__ {
+		ccu = "/fragment@0/__overlay__:assigned-clocks:0";
+	};
+};

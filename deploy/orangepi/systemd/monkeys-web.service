@@ -1,0 +1,17 @@
+[Unit]
+Description=MonkeysStab Web Interface
+After=network.target monkeys-router.service
+Wants=monkeys-router.service
+StartLimitIntervalSec=0
+
+[Service]
+Type=simple
+User=vio
+Environment=HOME=/home/vio
+WorkingDirectory=/home/vio/monkeysStab_orangepi
+ExecStart=/bin/bash -c 'source /home/vio/monkeys_orangepi.env && exec python3 -u tools/web_service.py --host 0.0.0.0 --port 8080'
+Restart=always
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target
